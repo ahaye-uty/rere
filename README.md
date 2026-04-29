@@ -32,8 +32,10 @@ This autoscript is a lifetime free autoscript with simple xray x noobzvpns multi
 
 ``🚀 Installation Guide``
 ```html
-apt update && apt install wget curl screen gnupg openssl perl binutils -y && wget -O install.sh "https://raw.githubusercontent.com/mousethain/rere/main/install.sh" && chmod +x install.sh && screen -S fn ./install.sh; if [ $? -ne 0 ]; then rm -f install.sh; fi
+apt update && apt install wget curl screen gnupg openssl perl binutils -y && wget -O install.sh "https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/install.sh" && chmod +x install.sh && screen -S fn ./install.sh; if [ $? -ne 0 ]; then rm -f install.sh; fi
 ```
+
+> Cukup satu command di atas. Inbound HTTPUpgrade (`/vless-hup`, `/vmess-hup`, `/trojan-hup`) sudah otomatis aktif setelah install selesai — tidak perlu lagi menjalankan `refresh-hup.sh` secara manual.
 
 ``If it stops in the middle of the process``
 ```html

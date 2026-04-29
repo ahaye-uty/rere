@@ -438,6 +438,20 @@ iptables-save > /etc/iptables/rules.v4
 clear
 rm -f /root/*
 
+# ===== Auto-run refresh-hup =====
+# Pastikan inbound HTTPUpgrade (/vless-hup, /vmess-hup, /trojan-hup) sudah
+# terpasang dan service xray + nginx sudah disinkronkan. Untuk fresh install
+# dari fork ini, config.json dan nginx.conf sudah membawa HUP, sehingga
+# refresh-hup akan mendeteksi state tersebut dan tidak memodifikasi config
+# lagi (idempotent). Tujuan utamanya: user tidak perlu lagi menjalankan
+# `bash <(curl -sL ...refresh-hup.sh)` secara manual setelah install.
+echo "[install] Memverifikasi HTTPUpgrade inbound (auto refresh-hup)..."
+if ! bash <(curl -fsSL "${hosting}/refresh-hup.sh"); then
+    echo "[install] WARNING: refresh-hup gagal dijalankan otomatis."
+    echo "[install] Install tetap dianggap selesai. Jika diperlukan, jalankan manual:"
+    echo "[install]   bash <(curl -sL ${hosting}/refresh-hup.sh)"
+fi
+
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
 echo -e "menu" >> /root/.profile
