@@ -298,6 +298,17 @@ rm -f /etc/nginx/nginx.conf
 wget -O /etc/nginx/nginx.conf "${hosting}/nginx.conf"
 sed -i "s|server_name fn.com;|server_name $domain;|" /etc/nginx/nginx.conf
 
+# Cari path absolut module stream (Debian/Ubuntu vs others)
+NGX_STREAM_MOD="$(ls /usr/lib/nginx/modules/ngx_stream_module.so /usr/share/nginx/modules/ngx_stream_module.so 2>/dev/null | head -n1)"
+if [ -z "$NGX_STREAM_MOD" ]; then
+    echo "[install] WARNING: ngx_stream_module.so tidak ditemukan. SSH SSL via SNI routing tidak akan jalan."
+    NGX_STREAM_MOD="/usr/lib/nginx/modules/ngx_stream_module.so"
+fi
+
+# Prepend load_module DI ATAS file (sebelum directive apapun) supaya stream
+# directive dikenali. nginx.conf upstream tidak include modules-enabled/.
+sed -i "1i load_module ${NGX_STREAM_MOD};\n" /etc/nginx/nginx.conf
+
 # Append stream block: SNI-based router untuk traffic TLS dari sslh.
 # - SNI = $domain          -> 127.0.0.1:1013 (nginx http TLS-termination utk xray)
 # - SNI lain / kosong      -> 127.0.0.1:1015 (stunnel -> OpenSSH:22)
