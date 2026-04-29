@@ -63,9 +63,16 @@ screen -r fn
 | **NoobzVPN HTTP(S)**           | 443, 2443                                |
 | **UDP Custom**                 | 443, 2443, 80, 36712, 1-65535            |
 | **SOCKS5**                     | 1080, 443, 2443                          |
+| **SSH Direct (OpenSSH)**       | 22, 109, 443, 80, 3303                   |
+| **SSH SSL/TLS (stunnel)**      | 443, 80                                  |
+| **SSH Dropbear**               | 111                                      |
 | **SSH WS TLS**                 | 443, 2443                                |
 | **SSH WS HTTP**                | 80, 2080, 2082                           |
 | **SLOWDNS**                    | 5300, 53                                 |
+
+> **SSH SSL/TLS via stunnel** menerima koneksi TLS dengan SNI apapun (mis. `live.iflix.com`, `bug.id`, dll). Sslh mengarahkan TLS ke nginx (xray) hanya jika SNI = domain VPS bapak; selain itu di-rute ke stunnel → OpenSSH:22. Cocok untuk inject app seperti HTTP Custom mode "SSL only".
+>
+> **SSH Direct di port 443/80** adalah raw SSH (tanpa TLS) yang dimultiplex oleh sslh. Untuk inject app yang pakai mode HTTP-only / payload custom tanpa TLS.
 
 ---
 ## PATH CUSTOM

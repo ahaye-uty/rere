@@ -149,10 +149,11 @@ clear
 # Save Data IP
 curl -s http://checkip.amazonaws.com > /root/.ip
 
-# Special SSLH
+# Special SSLH + stunnel (untuk SSH SSL/TLS)
 echo 'sslh   sslh/inetd_or_standalone select standalone' | sudo debconf-set-selections
 apt update -y
 apt install sslh -y
+apt install stunnel4 -y
 
 # Main Menu
 cd /usr/local/sbin
@@ -165,12 +166,51 @@ rm -f m.zip
 systemctl stop apache2
 systemctl disable apache2
 
-# Setup SSLH
-cd /etc/default
-rm -f sslh
-wget -O sslh "${hosting}/sslh"
-chmod 755 sslh
-cd
+# Setup SSLH (config-file mode + SNI-based TLS routing untuk SSH SSL)
+# Listener 1: 0.0.0.0:2443 -> dipakai untuk traffic publik 443 (via iptables 443->2443)
+# Listener 2: 0.0.0.0:2081 -> dipakai untuk traffic publik 80  (via iptables 80->2081)
+# TLS routing:
+#   - SNI = ${domain} (xray HUP/gRPC/WS-TLS)              -> nginx 127.0.0.1:1013
+#   - SNI lain (mis. live.iflix.com utk SSH SSL inject)    -> stunnel 127.0.0.1:1015 -> OpenSSH:22
+# Raw SSH (SSH direct di 443/80) -> OpenSSH:22
+# HTTP (xray HUP NTLS / WS NTLS) -> nginx 127.0.0.1:2080
+# SOCKS5 (Dante) -> 127.0.0.1:1080
+mkdir -p /etc/sslh /var/run/sslh
+cat > /etc/default/sslh <<'EOF'
+# Managed by sugengagung2020-maker/rere installer.
+# Mode: config file (sslh-select) untuk dukungan SNI-based TLS routing.
+RUN=yes
+DAEMON=/usr/sbin/sslh-select
+DAEMON_OPTS="-F /etc/sslh/sslh.cfg"
+EOF
+chmod 644 /etc/default/sslh
+
+cat > /etc/sslh/sslh.cfg <<EOF
+verbose: false;
+foreground: false;
+inetd: false;
+numeric: false;
+transparent: false;
+timeout: 2;
+user: "sslh";
+pidfile: "/var/run/sslh/sslh.pid";
+
+listen:
+(
+    { host: "0.0.0.0"; port: "2443"; },
+    { host: "0.0.0.0"; port: "2081"; }
+);
+
+protocols:
+(
+    { name: "ssh";    host: "127.0.0.1"; port: "22";   probe: "builtin"; },
+    { name: "tls";    host: "127.0.0.1"; port: "1013"; sni_hostnames: [ "${domain}" ]; probe: "builtin"; },
+    { name: "tls";    host: "127.0.0.1"; port: "1015"; probe: "builtin"; },
+    { name: "socks5"; host: "127.0.0.1"; port: "1080"; probe: "builtin"; },
+    { name: "http";   host: "127.0.0.1"; port: "2080"; probe: "builtin"; }
+);
+EOF
+chmod 644 /etc/sslh/sslh.cfg
 
 # Setup Rest Api
 cd /usr/local/sbin/api
@@ -381,6 +421,46 @@ echo -e "${domain}" > /usr/local/etc/xray/domain
     /root/.acme.sh/acme.sh --issue -d $domain --standalone -k ec-256
     ~/.acme.sh/acme.sh --installcert -d $domain --fullchainpath /usr/local/etc/xray/xray.crt --keypath /usr/local/etc/xray/xray.key --ecc
 
+# ===== Setup stunnel untuk SSH SSL (TLS termination -> OpenSSH:22) =====
+# Backend internal: 127.0.0.1:1015. Sslh akan rute TLS dengan SNI != ${domain}
+# (mis. SNI live.iflix.com dari HTTP Custom "SSL only") ke port ini.
+mkdir -p /etc/stunnel /var/run
+cat > /etc/stunnel/ssh-ssl.conf <<'EOF'
+foreground = no
+setuid = root
+setgid = root
+pid = /var/run/stunnel-ssh.pid
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1
+
+[ssh-ssl]
+accept = 127.0.0.1:1015
+connect = 127.0.0.1:22
+cert = /usr/local/etc/xray/xray.crt
+key = /usr/local/etc/xray/xray.key
+client = no
+EOF
+chmod 644 /etc/stunnel/ssh-ssl.conf
+
+cat > /etc/systemd/system/stunnel-ssh.service <<'EOF'
+[Unit]
+Description=Stunnel for SSH-SSL (TLS -> OpenSSH:22)
+Documentation=https://github.com/sugengagung2020-maker/rere
+After=network-online.target ssh.service sshd.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/stunnel4 /etc/stunnel/ssh-ssl.conf
+PIDFile=/var/run/stunnel-ssh.pid
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # Backup Setup
 curl https://rclone.org/install.sh | bash
 printf "q\n" | rclone config
@@ -406,15 +486,17 @@ systemctl start noobzvpns
 
 # Enable & Start Service
 systemctl daemon-reload
-pkill sslh
+pkill sslh 2>/dev/null || true
 # Force-purge any legacy v2ray service
 systemctl disable --now v2ray 2>/dev/null || true
 systemctl enable xray
 systemctl enable nginx
 systemctl enable sslh
+systemctl enable stunnel-ssh
 systemctl restart xray
 systemctl restart nginx
 systemctl restart sslh
+systemctl restart stunnel-ssh
 systemctl enable proxy
 systemctl start proxy
 systemctl restart proxy
@@ -427,8 +509,8 @@ iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 2443
 # Redirect UDP 443 ke UDP 36712
 iptables -t nat -A PREROUTING -p udp --dport 443 -j REDIRECT --to-port 36712
 
-# Redirect TCP 80 ke TCP 2080
-iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2080
+# Redirect TCP 80 ke TCP 2081 (sslh listener kedua: SSH direct/SSL + HTTP -> nginx)
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2081
 
 # Redirect UDP 80 ke UDP 26712
 iptables -t nat -A PREROUTING -p udp --dport 80 -j REDIRECT --to-port 36712
