@@ -11,6 +11,11 @@
 # Define Hosting
 hosting="https://raw.githubusercontent.com/mousethain/rere/main/file"
 
+if [ -f "/usr/local/etc/xray/domain" ]; then
+echo "Script Already Installed"
+exit 1
+fi
+
 if [ -f "/usr/local/etc/v2ray/domain" ]; then
 echo "Script Already Installed"
 exit 1
@@ -299,14 +304,14 @@ systemctl enable udp-custom &>/dev/null
 # Cron
 apt install cron -y
 echo -e "
-*/15 * * * * root echo -n > /var/log/v2ray/access.log
+*/15 * * * * root echo -n > /var/log/xray/access.log
 */15 * * * * root xp
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 " >> /etc/crontab
 systemctl daemon-reload
 systemctl restart cron
 
-# ===== Setup V2ray ======
+# ===== Setup Xray ======
 # Check if the group 'nobody' exists
 if getent group nobody > /dev/null; then
     echo "Group 'nobody' already exists."
@@ -322,9 +327,14 @@ else
     echo "User 'nobody' does not exist. Creating..."
     useradd -g nobody -M -s /sbin/nologin nobody
 fi
-bash <(curl -L https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh)
-rm -f /usr/local/etc/v2ray/config.json
-wget -O /usr/local/etc/v2ray/config.json "${hosting}/config.json"
+# Install Xray-core (XTLS) — supports vmess/vless/trojan over ws, grpc, httpupgrade
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+mkdir -p /usr/local/etc/xray
+mkdir -p /var/log/xray
+touch /var/log/xray/access.log /var/log/xray/error.log
+chown -R nobody:nogroup /var/log/xray 2>/dev/null || chown -R nobody:nobody /var/log/xray 2>/dev/null || true
+rm -f /usr/local/etc/xray/config.json
+wget -O /usr/local/etc/xray/config.json "${hosting}/config.json"
 
 # Setup NoobzVPNS
 clear
@@ -356,7 +366,7 @@ cd
 
 # Certificate
 iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2080
-echo -e "${domain}" > /usr/local/etc/v2ray/domain
+echo -e "${domain}" > /usr/local/etc/xray/domain
     rm -rf /root/.acme.sh
     mkdir /root/.acme.sh
     curl https://acme-install.netlify.app/acme.sh -o /root/.acme.sh/acme.sh
@@ -364,7 +374,7 @@ echo -e "${domain}" > /usr/local/etc/v2ray/domain
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
     /root/.acme.sh/acme.sh --issue -d $domain --standalone -k ec-256
-    ~/.acme.sh/acme.sh --installcert -d $domain --fullchainpath /usr/local/etc/v2ray/v2ray.crt --keypath /usr/local/etc/v2ray/v2ray.key --ecc
+    ~/.acme.sh/acme.sh --installcert -d $domain --fullchainpath /usr/local/etc/xray/xray.crt --keypath /usr/local/etc/xray/xray.key --ecc
 
 # Backup Setup
 curl https://rclone.org/install.sh | bash
@@ -392,10 +402,12 @@ systemctl start noobzvpns
 # Enable & Start Service
 systemctl daemon-reload
 pkill sslh
-systemctl enable v2ray
+# Force-purge any legacy v2ray service
+systemctl disable --now v2ray 2>/dev/null || true
+systemctl enable xray
 systemctl enable nginx
 systemctl enable sslh
-systemctl restart v2ray
+systemctl restart xray
 systemctl restart nginx
 systemctl restart sslh
 systemctl enable proxy

@@ -11,8 +11,8 @@ local_host = ["1"]
 
 [tcp_ssl]
 tls_version = "AUTO"
-key_pem = "/usr/local/etc/v2ray/v2ray.key"
-cert_pem = "/usr/local/etc/v2ray/v2ray.crt"
+key_pem = "/usr/local/etc/xray/xray.key"
+cert_pem = "/usr/local/etc/xray/xray.crt"
 
 [client]
 ip_version = "AUTO"

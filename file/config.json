@@ -9,7 +9,8 @@
 {
   "log": {
     "loglevel": "info",
-    "access": "/var/log/v2ray/access.log"
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
   },
   "api": {
     "services": [
@@ -184,6 +185,69 @@
         "network": "grpc",
         "grpcSettings": {
           "serviceName": "trojan-grpc"
+        }
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 14,
+      "protocol": "vless",
+      "settings": {
+        "decryption": "none",
+        "clients": [
+          {
+            "id": "1d1c1d94-6987-4658-a4dc-8821a30fe7e0"
+            #vless
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/vless-hup",
+          "host": ""
+        }
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 15,
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "1d1c1d94-6987-4658-a4dc-8821a30fe7e0",
+            "alterId": 0
+            #vmess
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/vmess-hup",
+          "host": ""
+        }
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 16,
+      "protocol": "trojan",
+      "settings": {
+        "decryption": "none",
+        "clients": [
+          {
+            "password": "1d1c1d94-6987-4658-a4dc-8821a30fe7e0"
+            #trojan
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/trojan-hup",
+          "host": ""
         }
       }
     }

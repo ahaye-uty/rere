@@ -25,7 +25,7 @@
 
 ## About
 
-This autoscript is a lifetime free autoscript with simple v2ray x noobzvpns multiport all os features.
+This autoscript is a lifetime free autoscript with simple xray x noobzvpns multiport all os features. Xray-core supports vmess/vless/trojan over WebSocket, gRPC, and HTTPUpgrade transports.
 
 ---
 ## Install
@@ -42,36 +42,45 @@ screen -r fn
 ---
 
 ## 🌐 Port Information
-| **Service**             | **Port(s)**           |
-|-------------------------|-----------------------|
-| **V2RAY Vmess TLS**      | 443, 2443                  |
-| **V2RAY Vmess gRPC**     | 443, 2443                  |
-| **V2RAY Vmess None TLS** | 80, 2080, 2082             |
-| **V2RAY Vless TLS**      | 443, 2443                  |
-| **V2RAY Vless gRPC**     | 443, 2443                  |
-| **V2RAY Vless None TLS** | 80, 2080, 2082             |
-| **V2RAY Trojan gRPC**    | 443, 2443                  |
-| **V2RAY Trojan WS**      | 443, 2443                  |
-| **XRAY  ShadowSocks**    | 443, 80                    |
-| **XRAY  Socks**          | 443, 80                    |
-| **NoobzVPN HTTP**        | 80, 2080, 2082             |
-| **NoobzVPN HTTP(S)**     | 443, 2443                  |
-| **UDP Custom**           | 443, 2443, 80, 36712, 1-65535                  |
-| **SOCKS5**               | 1080, 443, 2443            |
-| **SSH WS TLS**           | 443, 2443                  |
-| **SSH WS HTTP**          | 80, 2080, 2082             |
-| **SLOWDNS**              | 5300, 53                   |
+| **Service**                    | **Port(s)**                              |
+|--------------------------------|------------------------------------------|
+| **XRAY Vmess WS TLS**          | 443, 2443                                |
+| **XRAY Vmess WS None TLS**     | 80, 2080, 2082                           |
+| **XRAY Vmess gRPC**            | 443, 2443                                |
+| **XRAY Vmess HTTPUpgrade TLS** | 443, 2443                                |
+| **XRAY Vmess HTTPUpgrade NTLS**| 80, 2080, 2082                           |
+| **XRAY Vless WS TLS**          | 443, 2443                                |
+| **XRAY Vless WS None TLS**     | 80, 2080, 2082                           |
+| **XRAY Vless gRPC**            | 443, 2443                                |
+| **XRAY Vless HTTPUpgrade TLS** | 443, 2443                                |
+| **XRAY Vless HTTPUpgrade NTLS**| 80, 2080, 2082                           |
+| **XRAY Trojan WS**             | 443, 2443                                |
+| **XRAY Trojan gRPC**           | 443, 2443                                |
+| **XRAY Trojan HTTPUpgrade**    | 443, 2443                                |
+| **NoobzVPN HTTP**              | 80, 2080, 2082                           |
+| **NoobzVPN HTTP(S)**           | 443, 2443                                |
+| **UDP Custom**                 | 443, 2443, 80, 36712, 1-65535            |
+| **SOCKS5**                     | 1080, 443, 2443                          |
+| **SSH WS TLS**                 | 443, 2443                                |
+| **SSH WS HTTP**                | 80, 2080, 2082                           |
+| **SLOWDNS**                    | 5300, 53                                 |
 
 ---
 ## PATH CUSTOM
 - vmess websocket
-`/whatever & /custom`
-`/anypath & /random`
+`/vmess` (also reachable via the `/` multipath upstream)
 
-- vless Websocket
-`GET /vless HTTP/1.1`
-`CONNECT /vless HTTP/1.1`
-`CONNECT / HTTP/1.1`
+- vless websocket
+`/vless`
+
+- trojan websocket
+`/trojan-ws`
+
+- httpupgrade paths (vmess / vless / trojan)
+`/vmess-hup` `/vless-hup` `/trojan-hup`
+
+- gRPC service names
+`vmess-grpc` `vless-grpc` `trojan-grpc`
 
 ---
 
