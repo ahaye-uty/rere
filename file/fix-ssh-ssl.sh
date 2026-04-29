@@ -2,23 +2,27 @@
 # ========================================================
 # fix-ssh-ssl.sh
 #
-# Migrasi VPS rere ke arsitektur "edge-mux":
+# Migrasi VPS rere ke arsitektur edge-mux v2 (ALPN-aware, support gRPC):
 #
 #   Public 443/80 -> iptables -> sslh-public (2443/2081)
 #                                   |
-#                                   tls -> stunnel:1015 [TLS termination, cert=xray]
-#                                                |
-#                                                v
-#                                          sslh-internal:8444 [HTTP/SSH probe]
-#                                                |--- HTTP -> nginx:2080 -> xray
-#                                                +--- SSH  -> OpenSSH:22
-#                                   ssh -> OpenSSH:22 (SSH direct di 443/80)
+#                                   tls -> nginx-stream:8443 [ssl_preread alpn]
+#                                            |
+#                                            +-- ALPN h2 -> nginx:1013 (TLS+h2 / xray gRPC)
+#                                            +-- ALPN h1 -> stunnel:1015 [terminate TLS]
+#                                                                |
+#                                                                v
+#                                                          sslh-internal:8444
+#                                                          |-- HTTP -> nginx:2080
+#                                                          +-- SSH  -> OpenSSH:22
+#                                   ssh -> OpenSSH:22 (SSH direct, raw)
 #                                   http -> nginx:2080
 #                                   socks5 -> Dante:1080
 #
-# Dengan setup ini, klien inject yang pakai SNI=bug-host (mis.
-# live.iflix.com) yang sama untuk xray DAN SSH SSL akan dirute dengan
-# benar berdasarkan protokol setelah TLS termination, bukan SNI.
+# Dibanding versi sebelumnya (PR #5/#6), ditambah ALPN-based split di nginx-stream
+# supaya gRPC (h2) tidak ikut diterminasi oleh stunnel (yang bikin h2 pecah).
+# h2 langsung diteruskan ke nginx:1013 untuk TLS+h2 termination.
+# Klien inject (SNI=bug-host) tetap jalan karena routing berdasarkan ALPN, bukan SNI.
 #
 # Cara pakai (di VPS, sebagai root):
 #   bash <(curl -sL https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file/fix-ssh-ssl.sh)
@@ -55,21 +59,31 @@ mkdir -p "$BACKUP_DIR"
 [ -f "$NGINX_CONF" ]                   && cp "$NGINX_CONF"                   "$BACKUP_DIR/nginx.conf"
 echo "[fix-ssh-ssl] Backup config lama -> $BACKUP_DIR"
 
-# 1. Pastikan stunnel4 terpasang
-if ! command -v stunnel4 >/dev/null 2>&1; then
-    echo "[fix-ssh-ssl] Installing stunnel4 ..."
+# 1. Pastikan stunnel4 + nginx stream module terpasang
+NEED_INSTALL=()
+command -v stunnel4 >/dev/null 2>&1 || NEED_INSTALL+=(stunnel4)
+dpkg -s libnginx-mod-stream >/dev/null 2>&1 || NEED_INSTALL+=(libnginx-mod-stream)
+if [ "${#NEED_INSTALL[@]}" -gt 0 ]; then
+    echo "[fix-ssh-ssl] Installing: ${NEED_INSTALL[*]} ..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y stunnel4
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${NEED_INSTALL[@]}"
 fi
 
-# 2. Cleanup nginx.conf dari sisa percobaan stream/SNI sebelumnya (idempotent)
+NGX_STREAM_MOD="$(ls /usr/lib/nginx/modules/ngx_stream_module.so /usr/share/nginx/modules/ngx_stream_module.so 2>/dev/null | head -n1)"
+if [ -z "$NGX_STREAM_MOD" ]; then
+    echo "[fix-ssh-ssl] ERROR: ngx_stream_module.so tidak ditemukan setelah install."
+    exit 1
+fi
+
+# 2. Cleanup nginx.conf: hapus stream/load_module bekas versi lama,
+# lalu inject load_module + stream block ALPN-router yang baru.
 if [ -f "$NGINX_CONF" ]; then
     # Hapus baris load_module ngx_stream_module.so yang lama
     sed -i '/^load_module .*ngx_stream_module\.so;\?$/d' "$NGINX_CONF"
-    # Hapus blok stream { ... } yang ditandai dengan "Stream block (SNI router)"
+    # Hapus blok stream { ... } bekas (apapun marker komentarnya: SNI router / ALPN router)
     awk '
         BEGIN { skip=0; depth=0 }
-        /^# ===== Stream block \(SNI router/ { skip=1; depth=0; next }
+        /^# ===== Stream block \(/  { skip=1; depth=0; next }
         skip==1 {
             if (match($0, /\{/)) depth += gsub(/\{/, "{")
             if (match($0, /\}/)) depth -= gsub(/\}/, "}")
@@ -79,6 +93,30 @@ if [ -f "$NGINX_CONF" ]; then
         { print }
     ' "$NGINX_CONF" > "${NGINX_CONF}.tmp" && mv "${NGINX_CONF}.tmp" "$NGINX_CONF"
 fi
+
+# Inject load_module di awal nginx.conf
+sed -i "1i load_module ${NGX_STREAM_MOD};\n" "$NGINX_CONF"
+
+# Append stream block ALPN router
+cat >> "$NGINX_CONF" <<'EOF'
+
+# ===== Stream block (ALPN router) =====
+# h2 (gRPC)         -> nginx:1013 (TLS+h2 termination, xray gRPC)
+# h1 / lainnya      -> stunnel:1015 -> sslh-internal -> HTTP/SSH
+stream {
+    map $ssl_preread_alpn_protocols $rerechan_alpn_upstream {
+        ~\bh2\b   127.0.0.1:1013;
+        default   127.0.0.1:1015;
+    }
+
+    server {
+        listen 127.0.0.1:8443;
+        ssl_preread on;
+        proxy_pass $rerechan_alpn_upstream;
+        proxy_connect_timeout 10s;
+    }
+}
+EOF
 
 # 3. Test nginx -t setelah cleanup; auto-revert kalau gagal
 echo "[fix-ssh-ssl] Test nginx config setelah cleanup ..."
@@ -118,7 +156,7 @@ listen:
 protocols:
 (
     { name: "ssh";    host: "127.0.0.1"; port: "22";   probe: "builtin"; },
-    { name: "tls";    host: "127.0.0.1"; port: "1015"; probe: "builtin"; },
+    { name: "tls";    host: "127.0.0.1"; port: "8443"; probe: "builtin"; },
     { name: "socks5"; host: "127.0.0.1"; port: "1080"; probe: "builtin"; },
     { name: "http";   host: "127.0.0.1"; port: "2080"; probe: "builtin"; }
 );
@@ -218,6 +256,8 @@ check_listen() {
 }
 check_listen "2443"  "sslh-public"
 check_listen "2081"  "sslh-public"
+check_listen "8443"  "nginx-stream (ALPN router)"
+check_listen "1013"  "nginx https (TLS+h2)"
 check_listen "1015"  "stunnel"
 check_listen "8444"  "sslh-internal"
 check_listen "2080"  "nginx http (HUP NTLS)"

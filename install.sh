@@ -174,26 +174,31 @@ rm -f /tmp/patch-menu-ports.sh
 systemctl stop apache2
 systemctl disable apache2
 
-# Setup SSLH (config-file mode) + sslh-internal (post-TLS protocol dispatcher)
+# Setup SSLH (config-file mode) + sslh-internal + ALPN-based TLS split
 #
-# Arsitektur (mendukung inject bug-host: SNI = bug, Host = bug, address = domain):
+# Arsitektur edge-mux v2 (mendukung inject bug-host + xray gRPC h2):
 #
-#   Public 443/80 -> iptables -> sslh-public (2443/2081) [multiplex SSH/TLS/HTTP/SOCKS5]
+#   Public 443/80 -> iptables -> sslh-public (2443/2081) [SSH/TLS/HTTP/SOCKS5 mux]
 #                                   |
-#                                   tls -> stunnel:1015 [TLS termination, cert=xray]
-#                                                |
-#                                                v
-#                                          sslh-internal:8444 [HTTP/SSH probe]
-#                                                |--- HTTP -> nginx:2080 -> xray
-#                                                +--- SSH  -> OpenSSH:22
-#                                   ssh -> OpenSSH:22 (SSH direct di 443/80)
-#                                   http -> nginx:2080 (HUP NTLS / WS NTLS)
+#                                   tls -> nginx-stream:8443 [ssl_preread alpn]
+#                                            |
+#                                            +-- ALPN h2  -> nginx:1013 (TLS+h2, gRPC)
+#                                            +-- ALPN h1  -> stunnel:1015 [terminate TLS]
+#                                                                |
+#                                                                v
+#                                                          sslh-internal:8444
+#                                                          |-- HTTP -> nginx:2080
+#                                                          +-- SSH  -> OpenSSH:22
+#                                   ssh -> OpenSSH:22 (SSH direct, raw)
+#                                   http -> nginx:2080 (HUP NTLS)
 #                                   socks5 -> Dante:1080
 #
-# Note: SNI-based routing tidak dipakai (gagal untuk inject klien yang pakai
-# SNI = bug-host yang sama untuk xray dan SSH SSL). Semua TLS diterminasi
-# dulu oleh stunnel, baru protokolnya dideteksi (HTTP vs SSH) oleh
-# sslh-internal.
+# Notes:
+# - SNI tidak dipakai untuk routing -> klien inject dengan SNI=bug-host
+#   (mis. live.iflix.com) tetap konek di kedua protokol.
+# - ALPN dipakai untuk membedakan h2 (gRPC) dari h1 (HUP/WS/HTTPS biasa).
+#   Untuk h2, TLS NOT terminated -> nginx:1013 menerima TLS+h2 langsung.
+#   Untuk h1, TLS diterminasi oleh stunnel -> sslh-internal -> HTTP atau SSH.
 mkdir -p /etc/sslh /var/run/sslh
 cat > /etc/default/sslh <<'EOF'
 # Managed by sugengagung2020-maker/rere installer.
@@ -224,7 +229,7 @@ listen:
 protocols:
 (
     { name: "ssh";    host: "127.0.0.1"; port: "22";   probe: "builtin"; },
-    { name: "tls";    host: "127.0.0.1"; port: "1015"; probe: "builtin"; },
+    { name: "tls";    host: "127.0.0.1"; port: "8443"; probe: "builtin"; },
     { name: "socks5"; host: "127.0.0.1"; port: "1080"; probe: "builtin"; },
     { name: "http";   host: "127.0.0.1"; port: "2080"; probe: "builtin"; }
 );
@@ -326,11 +331,41 @@ sudo systemctl daemon-reload
 sudo systemctl restart danted
 sudo systemctl enable danted
 
-# Setup Nginx
+# Setup Nginx (+ stream module untuk ALPN-based TLS routing)
 apt install nginx -y
+apt install libnginx-mod-stream -y
 rm -f /etc/nginx/nginx.conf
 wget -O /etc/nginx/nginx.conf "${hosting}/nginx.conf"
 sed -i "s|server_name fn.com;|server_name $domain;|" /etc/nginx/nginx.conf
+
+# nginx.conf upstream tidak include modules-enabled/, jadi load_module manual.
+NGX_STREAM_MOD="$(ls /usr/lib/nginx/modules/ngx_stream_module.so /usr/share/nginx/modules/ngx_stream_module.so 2>/dev/null | head -n1)"
+if [ -z "$NGX_STREAM_MOD" ]; then
+    echo "[install] WARNING: ngx_stream_module.so tidak ditemukan. xray gRPC inject tidak akan jalan."
+    NGX_STREAM_MOD="/usr/lib/nginx/modules/ngx_stream_module.so"
+fi
+sed -i "1i load_module ${NGX_STREAM_MOD};\n" /etc/nginx/nginx.conf
+
+# Append stream block: ALPN-based router untuk TLS dari sslh-public.
+# - ALPN h2  -> nginx:1013 (TLS+h2 termination, xray gRPC)
+# - ALPN lain (http/1.1, kosong) -> stunnel:1015 -> sslh-internal -> HTTP/SSH
+cat >> /etc/nginx/nginx.conf <<'EOF'
+
+# ===== Stream block (ALPN router) =====
+stream {
+    map $ssl_preread_alpn_protocols $rerechan_alpn_upstream {
+        ~\bh2\b   127.0.0.1:1013;
+        default   127.0.0.1:1015;
+    }
+
+    server {
+        listen 127.0.0.1:8443;
+        ssl_preread on;
+        proxy_pass $rerechan_alpn_upstream;
+        proxy_connect_timeout 10s;
+    }
+}
+EOF
 
 systemctl stop nginx
 systemctl disable nginx
