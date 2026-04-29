@@ -70,7 +70,13 @@ screen -r fn
 | **SSH WS HTTP**                | 80, 2080, 2082                           |
 | **SLOWDNS**                    | 5300, 53                                 |
 
-> **SSH SSL/TLS via stunnel** menerima koneksi TLS dengan SNI apapun (mis. `live.iflix.com`, `bug.id`, dll). Sslh mengarahkan TLS ke nginx (xray) hanya jika SNI = domain VPS bapak; selain itu di-rute ke stunnel → OpenSSH:22. Cocok untuk inject app seperti HTTP Custom mode "SSL only".
+> **SSH SSL/TLS + Xray HUP/WS-TLS dengan SNI bebas (inject bug-host)** —
+> arsitektur "edge-mux": TLS publik diterminasi dulu oleh `stunnel` (cert
+> xray), lalu bytes plain-textnya dirute oleh `sslh-internal` berdasarkan
+> protokol — HTTP → nginx → xray, SSH → OpenSSH:22. Karena routing
+> dilakukan setelah dekripsi (bukan dari SNI), klien inject yang pakai SNI
+> apa pun (`live.iflix.com`, `bug.id`, dll) tetap bisa konek di kedua
+> jenis layanan: xray HUP/WS-TLS dan SSH SSL.
 >
 > **SSH Direct di port 443/80** adalah raw SSH (tanpa TLS) yang dimultiplex oleh sslh. Untuk inject app yang pakai mode HTTP-only / payload custom tanpa TLS.
 
