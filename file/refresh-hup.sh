@@ -34,6 +34,21 @@ if [ ! -f "$XRAY_DIR/config.json" ] && [ -f "$LEGACY_DIR/config.json" ]; then
     cp -a "$LEGACY_DIR/." "$XRAY_DIR/"
 fi
 
+# Normalisasi nama file cert: layout v2ray-era memakai v2ray.crt / v2ray.key,
+# layout baru memakai xray.crt / xray.key. nginx.conf yang baru cari nama
+# xray.* — kalau cuma ada v2ray.* (atau cuma ada xray.*) buatkan duplikat /
+# rename supaya kedua nama tersedia. Tidak hapus yang lama supaya rollback
+# tidak bricked.
+for ext in crt key; do
+    if [ -f "$XRAY_DIR/v2ray.$ext" ] && [ ! -f "$XRAY_DIR/xray.$ext" ]; then
+        echo "[refresh-hup] Menyalin v2ray.$ext -> xray.$ext"
+        cp -a "$XRAY_DIR/v2ray.$ext" "$XRAY_DIR/xray.$ext"
+    fi
+    if [ -f "$XRAY_DIR/xray.$ext" ] && [ ! -f "$XRAY_DIR/v2ray.$ext" ]; then
+        cp -a "$XRAY_DIR/xray.$ext" "$XRAY_DIR/v2ray.$ext" 2>/dev/null || true
+    fi
+done
+
 CONFIG="$XRAY_DIR/config.json"
 DOMAIN_FILE="$XRAY_DIR/domain"
 
@@ -45,6 +60,11 @@ if [ ! -f "$DOMAIN_FILE" ]; then
     echo "[refresh-hup] ERROR: $DOMAIN_FILE tidak ditemukan, tidak bisa rebuild nginx.conf."
     exit 1
 fi
+if [ ! -f "$XRAY_DIR/xray.crt" ] || [ ! -f "$XRAY_DIR/xray.key" ]; then
+    echo "[refresh-hup] ERROR: $XRAY_DIR/xray.crt atau xray.key tidak ditemukan."
+    echo "[refresh-hup]        Cek manual isi $XRAY_DIR (mungkin nama cert beda)."
+    exit 1
+fi
 DOMAIN=$(cat "$DOMAIN_FILE")
 
 TS=$(date +%s)
@@ -53,8 +73,8 @@ mkdir -p "$BACKUP_DIR"
 echo "[refresh-hup] Backup ke $BACKUP_DIR"
 cp "$CONFIG" "$BACKUP_DIR/config.json" 2>/dev/null || true
 cp /etc/nginx/nginx.conf "$BACKUP_DIR/nginx.conf" 2>/dev/null || true
-cp /usr/local/etc/xray/xray.crt "$BACKUP_DIR/" 2>/dev/null || true
-cp /usr/local/etc/xray/xray.key "$BACKUP_DIR/" 2>/dev/null || true
+cp "$XRAY_DIR/xray.crt" "$BACKUP_DIR/" 2>/dev/null || true
+cp "$XRAY_DIR/xray.key" "$BACKUP_DIR/" 2>/dev/null || true
 
 echo "[refresh-hup] Re-download main.zip ..."
 TMP_ZIP=$(mktemp)
@@ -214,7 +234,8 @@ sed -i 's|/var/log/v2ray/|/var/log/xray/|g' "$CONFIG" || true
 echo "[refresh-hup] Test config xray ..."
 if command -v xray >/dev/null 2>&1; then
     if ! xray run -test -c "$CONFIG" >/tmp/refresh-hup-xray.log 2>&1; then
-        echo "[refresh-hup] ERROR: xray menolak config baru. Lihat /tmp/refresh-hup-xray.log"
+        echo "[refresh-hup] ERROR: xray menolak config baru:"
+        tail -n 30 /tmp/refresh-hup-xray.log | sed 's/^/[refresh-hup]   /'
         echo "[refresh-hup] Restore config lama dari $BACKUP_DIR/config.json"
         cp "$BACKUP_DIR/config.json" "$CONFIG"
         exit 1
@@ -223,7 +244,8 @@ fi
 
 echo "[refresh-hup] Test config nginx ..."
 if ! nginx -t >/tmp/refresh-hup-nginx.log 2>&1; then
-    echo "[refresh-hup] ERROR: nginx menolak config baru. Lihat /tmp/refresh-hup-nginx.log"
+    echo "[refresh-hup] ERROR: nginx menolak config baru:"
+    sed 's/^/[refresh-hup]   /' /tmp/refresh-hup-nginx.log
     echo "[refresh-hup] Restore nginx.conf lama dari $BACKUP_DIR/nginx.conf"
     cp "$BACKUP_DIR/nginx.conf" /etc/nginx/nginx.conf
     exit 1
