@@ -50,7 +50,6 @@ TS=$(date +%s)
 BACKUP_DIR="/root/rere-fix-ssh-ssl-backup-$TS"
 mkdir -p "$BACKUP_DIR"
 [ -f /etc/sslh/sslh.cfg ]              && cp /etc/sslh/sslh.cfg              "$BACKUP_DIR/sslh.cfg"
-[ -f /etc/sslh/sslh-internal.cfg ]     && cp /etc/sslh/sslh-internal.cfg     "$BACKUP_DIR/sslh-internal.cfg"
 [ -f /etc/default/sslh ]               && cp /etc/default/sslh               "$BACKUP_DIR/sslh.default"
 [ -f /etc/stunnel/ssh-ssl.conf ]       && cp /etc/stunnel/ssh-ssl.conf       "$BACKUP_DIR/stunnel-ssh.conf"
 [ -f "$NGINX_CONF" ]                   && cp "$NGINX_CONF"                   "$BACKUP_DIR/nginx.conf"
@@ -127,33 +126,12 @@ EOF
 chmod 644 /etc/sslh/sslh.cfg
 echo "[fix-ssh-ssl] sslh-public config OK."
 
-# 5. Generate sslh-internal config (post-TLS HTTP/SSH dispatcher)
-cat > /etc/sslh/sslh-internal.cfg <<'EOF'
-verbose: false;
-foreground: false;
-inetd: false;
-numeric: false;
-transparent: false;
-timeout: 2;
-user: "sslh";
-pidfile: "/var/run/sslh/sslh-internal.pid";
+# 5. Hapus sslh-internal.cfg yang lama (dari versi sebelumnya yg pakai -F file).
+# sslh 1.20-1 di Ubuntu 20.04 mengabaikan flag -F dan selalu baca /etc/sslh/sslh.cfg,
+# jadi sslh-internal pakai CLI flags murni.
+rm -f /etc/sslh/sslh-internal.cfg
 
-listen:
-(
-    { host: "127.0.0.1"; port: "8444"; }
-);
-
-protocols:
-(
-    { name: "ssh";  host: "127.0.0.1"; port: "22";   probe: "builtin"; },
-    { name: "http"; host: "127.0.0.1"; port: "2080"; probe: "builtin"; },
-    { name: "anyprot"; host: "127.0.0.1"; port: "22"; }
-);
-EOF
-chmod 644 /etc/sslh/sslh-internal.cfg
-echo "[fix-ssh-ssl] sslh-internal config OK."
-
-# 6. Generate sslh-internal systemd service
+# 6. Generate sslh-internal systemd service (CLI flags, bukan config file)
 cat > /etc/systemd/system/sslh-internal.service <<'EOF'
 [Unit]
 Description=SSLH internal post-TLS protocol dispatcher (HTTP/SSH)
@@ -162,7 +140,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/sbin/sslh --foreground -F /etc/sslh/sslh-internal.cfg
+ExecStart=/usr/sbin/sslh --foreground --user sslh -p 127.0.0.1:8444 --ssh 127.0.0.1:22 --http 127.0.0.1:2080 --anyprot 127.0.0.1:22 -t 2
 KillMode=process
 Restart=on-failure
 RestartSec=5
@@ -171,6 +149,7 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
+echo "[fix-ssh-ssl] sslh-internal service OK (CLI flags mode)."
 
 # 7. Update stunnel: forward ke sslh-internal (8444), bukan langsung OpenSSH:22
 mkdir -p /etc/stunnel /var/run
@@ -228,20 +207,21 @@ systemctl restart sslh
 sleep 2
 ALL_GOOD=1
 check_listen() {
-    local addr="$1" label="$2"
-    if ss -tlnp 2>/dev/null | grep -qE "(^|\s)${addr//./\\.}(\s|$)"; then
-        echo "[fix-ssh-ssl] OK: $label listen di $addr."
+    local port="$1" label="$2"
+    # Cek apakah ada proses listen di port (bind di IP manapun)
+    if ss -tlnp 2>/dev/null | grep -qE ":${port}\b"; then
+        echo "[fix-ssh-ssl] OK: $label listen di port $port."
     else
-        echo "[fix-ssh-ssl] FAIL: $label tidak listen di $addr."
+        echo "[fix-ssh-ssl] FAIL: $label tidak listen di port $port."
         ALL_GOOD=0
     fi
 }
-check_listen "0.0.0.0:2443"   "sslh-public"
-check_listen "0.0.0.0:2081"   "sslh-public"
-check_listen "127.0.0.1:1015" "stunnel"
-check_listen "127.0.0.1:8444" "sslh-internal"
-check_listen "127.0.0.1:2080" "nginx http (HUP NTLS)"
-check_listen "0.0.0.0:22"     "OpenSSH"
+check_listen "2443"  "sslh-public"
+check_listen "2081"  "sslh-public"
+check_listen "1015"  "stunnel"
+check_listen "8444"  "sslh-internal"
+check_listen "2080"  "nginx http (HUP NTLS)"
+check_listen "22"    "OpenSSH"
 
 echo
 if [ "$ALL_GOOD" = "1" ]; then

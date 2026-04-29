@@ -223,33 +223,10 @@ protocols:
 EOF
 chmod 644 /etc/sslh/sslh.cfg
 
-# sslh-internal: post-TLS dispatcher (HTTP -> nginx, SSH -> OpenSSH)
-# Listener cuma di 127.0.0.1:8444 - menerima traffic dari stunnel.
-cat > /etc/sslh/sslh-internal.cfg <<'EOF'
-verbose: false;
-foreground: false;
-inetd: false;
-numeric: false;
-transparent: false;
-timeout: 2;
-user: "sslh";
-pidfile: "/var/run/sslh/sslh-internal.pid";
-
-listen:
-(
-    { host: "127.0.0.1"; port: "8444"; }
-);
-
-protocols:
-(
-    { name: "ssh";  host: "127.0.0.1"; port: "22";   probe: "builtin"; },
-    { name: "http"; host: "127.0.0.1"; port: "2080"; probe: "builtin"; },
-    { name: "anyprot"; host: "127.0.0.1"; port: "22"; }
-);
-EOF
-chmod 644 /etc/sslh/sslh-internal.cfg
-
-# Systemd unit untuk sslh-internal (terpisah dari sslh.service stock)
+# sslh-internal: post-TLS dispatcher (HTTP -> nginx, SSH -> OpenSSH).
+# Catatan: package sslh 1.20-1 di Ubuntu 20.04 punya bug - flag '-F file'
+# diabaikan dan selalu baca /etc/sslh/sslh.cfg. Untuk hindari konflik
+# dengan sslh-public, sslh-internal pakai CLI flags (bukan config file).
 cat > /etc/systemd/system/sslh-internal.service <<'EOF'
 [Unit]
 Description=SSLH internal post-TLS protocol dispatcher (HTTP/SSH)
@@ -258,7 +235,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/sbin/sslh --foreground -F /etc/sslh/sslh-internal.cfg
+ExecStart=/usr/sbin/sslh --foreground --user sslh -p 127.0.0.1:8444 --ssh 127.0.0.1:22 --http 127.0.0.1:2080 --anyprot 127.0.0.1:22 -t 2
 KillMode=process
 Restart=on-failure
 RestartSec=5
