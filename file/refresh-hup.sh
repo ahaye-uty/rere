@@ -86,6 +86,17 @@ chmod +x ./* 2>/dev/null || true
 [ -d /usr/local/sbin/api ] && chmod +x /usr/local/sbin/api/* 2>/dev/null || true
 rm -f "$TMP_ZIP"
 
+# Patch port info di add-ssh / add-ssh-gege ke arsitektur edge-mux
+# (sslh-public + stunnel + sslh-internal). Idempotent.
+RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+TMP_PATCH=$(mktemp)
+if wget -q -O "$TMP_PATCH" "${RERE_HOSTING}/patch-menu-ports.sh"; then
+    bash "$TMP_PATCH" /usr/local/sbin || true
+else
+    echo "[refresh-hup] WARNING: gagal download patch-menu-ports.sh, skip."
+fi
+rm -f "$TMP_PATCH"
+
 echo "[refresh-hup] Re-download nginx.conf ..."
 wget -q -O /etc/nginx/nginx.conf "$HOSTING/nginx.conf"
 sed -i "s|server_name fn.com;|server_name $DOMAIN;|" /etc/nginx/nginx.conf

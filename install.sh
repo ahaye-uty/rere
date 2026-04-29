@@ -162,6 +162,14 @@ unzip m.zip
 chmod +x *
 rm -f m.zip
 
+# Patch port info di add-ssh / add-ssh-gege supaya cocok dengan
+# arsitektur edge-mux (SSH Direct + SSH SSL/TLS multiport).
+RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+wget -q -O /tmp/patch-menu-ports.sh "${RERE_HOSTING}/patch-menu-ports.sh" \
+    && bash /tmp/patch-menu-ports.sh /usr/local/sbin \
+    || echo "[install] WARNING: gagal apply patch-menu-ports.sh (skip)"
+rm -f /tmp/patch-menu-ports.sh
+
 # Stoping HTTP
 systemctl stop apache2
 systemctl disable apache2
