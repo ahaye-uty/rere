@@ -231,15 +231,40 @@ fi
 echo "[refresh-hup] Sinkronisasi log path lama -> baru di config.json (kalau masih /var/log/v2ray) ..."
 sed -i 's|/var/log/v2ray/|/var/log/xray/|g' "$CONFIG" || true
 
-echo "[refresh-hup] Test config xray ..."
-if command -v xray >/dev/null 2>&1; then
-    if ! xray run -test -c "$CONFIG" >/tmp/refresh-hup-xray.log 2>&1; then
-        echo "[refresh-hup] ERROR: xray menolak config baru:"
-        tail -n 30 /tmp/refresh-hup-xray.log | sed 's/^/[refresh-hup]   /'
-        echo "[refresh-hup] Restore config lama dari $BACKUP_DIR/config.json"
-        cp "$BACKUP_DIR/config.json" "$CONFIG"
+echo "[refresh-hup] Memastikan xray-core terinstal sebagai service ..."
+INSTALL_XRAY=0
+if ! command -v xray >/dev/null 2>&1; then
+    INSTALL_XRAY=1
+elif ! systemctl list-unit-files xray.service 2>/dev/null | grep -q '^xray\.service'; then
+    INSTALL_XRAY=1
+fi
+
+if [ "$INSTALL_XRAY" = "1" ]; then
+    echo "[refresh-hup] xray binary / service belum ada, install via XTLS/Xray-install ..."
+    apt-get install -y --no-install-recommends ca-certificates curl unzip >/dev/null 2>&1 || true
+    if ! bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install >/tmp/refresh-hup-xrayinstall.log 2>&1; then
+        echo "[refresh-hup] ERROR: gagal install xray-core. Lihat log:"
+        tail -n 30 /tmp/refresh-hup-xrayinstall.log | sed 's/^/[refresh-hup]   /'
         exit 1
     fi
+fi
+
+# Kalau service v2ray masih hidup, matikan supaya tidak rebut port dengan xray.
+for legacy in v2ray.service v2ray@v2ray.service; do
+    if systemctl list-unit-files "$legacy" 2>/dev/null | grep -q "^${legacy}"; then
+        echo "[refresh-hup] Disable + stop legacy $legacy ..."
+        systemctl disable --now "$legacy" >/dev/null 2>&1 || true
+    fi
+done
+systemctl enable xray >/dev/null 2>&1 || true
+
+echo "[refresh-hup] Test config xray ..."
+if ! xray run -test -c "$CONFIG" >/tmp/refresh-hup-xray.log 2>&1; then
+    echo "[refresh-hup] ERROR: xray menolak config baru:"
+    tail -n 30 /tmp/refresh-hup-xray.log | sed 's/^/[refresh-hup]   /'
+    echo "[refresh-hup] Restore config lama dari $BACKUP_DIR/config.json"
+    cp "$BACKUP_DIR/config.json" "$CONFIG"
+    exit 1
 fi
 
 echo "[refresh-hup] Test config nginx ..."
