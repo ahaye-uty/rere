@@ -669,6 +669,17 @@ if ! bash <(curl -fsSL "${RERE_HOSTING}/fix-ssh-ssl.sh"); then
     echo "[install]   bash <(curl -sL ${RERE_HOSTING}/fix-ssh-ssl.sh)"
 fi
 
+# ===== Auto-run setup-fail2ban =====
+# Pasang fail2ban + jail untuk OpenSSH (port 22, 109, 3303) dan Dropbear
+# (port 111). 5x gagal login dalam 10 menit -> ban 1 jam. Localhost di-whitelist
+# supaya sslh-internal yg forward SSH dari 127.0.0.1 tidak ke-ban diri sendiri.
+echo "[install] Memasang fail2ban (auto setup-fail2ban)..."
+if ! bash <(curl -fsSL "${RERE_HOSTING}/setup-fail2ban.sh"); then
+    echo "[install] WARNING: setup-fail2ban gagal dijalankan otomatis."
+    echo "[install] Install tetap dianggap selesai. Jika diperlukan, jalankan manual:"
+    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/setup-fail2ban.sh)"
+fi
+
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
 echo -e "menu" >> /root/.profile
