@@ -665,6 +665,7 @@ rm -f /root/*
 RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
 __rere_run_remote() {
     local url="$1" tmp rc
+    shift
     tmp=$(mktemp /tmp/rere-remote.XXXXXX.sh)
     if ! curl -fsSL "$url" -o "$tmp"; then
         rm -f "$tmp"
@@ -674,7 +675,7 @@ __rere_run_remote() {
         rm -f "$tmp"
         return 92
     fi
-    bash "$tmp"
+    bash "$tmp" "$@"
     rc=$?
     rm -f "$tmp"
     return $rc
@@ -710,6 +711,21 @@ __rere_track "fix-ssh-ssl" $?
 echo "[install] Memasang fail2ban (auto setup-fail2ban)..."
 __rere_run_remote "${RERE_HOSTING}/setup-fail2ban.sh"
 __rere_track "setup-fail2ban" $?
+
+# ===== Re-run patch-menu-* sebagai safety net =====
+# Patch-menu sudah dipanggil lebih awal (line ~213) tapi pakai pola lama
+# `wget && bash || echo WARNING` -- kalau gagal, error-nya ke-spam di tengah
+# install dan user gampang ngeskip. Re-jalankan di sini lewat helper yang
+# tracked, supaya hasilnya keliatan di RINGKASAN. Patches idempotent.
+echo "[install] Verifikasi akhir patch menu (safety net)..."
+__rere_run_remote "${RERE_HOSTING}/patch-menu-ports.sh" /usr/local/sbin
+__rere_track "patch-menu-ports" $?
+
+__rere_run_remote "${RERE_HOSTING}/patch-menu-fail2ban.sh" /usr/local/sbin
+__rere_track "patch-menu-fail2ban" $?
+
+__rere_run_remote "${RERE_HOSTING}/patch-menu-misc.sh" /usr/local/sbin
+__rere_track "patch-menu-misc" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
