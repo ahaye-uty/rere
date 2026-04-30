@@ -215,6 +215,13 @@ wget -q -O /tmp/patch-menu-fail2ban.sh "${RERE_HOSTING}/patch-menu-fail2ban.sh" 
     || echo "[install] WARNING: gagal apply patch-menu-fail2ban.sh (skip)"
 rm -f /tmp/patch-menu-fail2ban.sh
 
+# Patch backup script (hapus legacy v2ray dir) + menu case 10 (restart all
+# service: tambahkan sslh-internal, stunnel-ssh, dropbear, noobzvpns, fail2ban).
+wget -q -O /tmp/patch-menu-misc.sh "${RERE_HOSTING}/patch-menu-misc.sh" \
+    && bash /tmp/patch-menu-misc.sh /usr/local/sbin \
+    || echo "[install] WARNING: gagal apply patch-menu-misc.sh (skip)"
+rm -f /tmp/patch-menu-misc.sh
+
 # Stoping HTTP
 systemctl stop apache2
 systemctl disable apache2
