@@ -8,6 +8,45 @@
 #          Selling this code or its derivatives is strictly forbidden.
 # ========================================================
 
+# ===== Gate (auth) =====
+# Hanya pemilik password yang boleh menjalankan installer ini. Password plain
+# TIDAK pernah disimpan di file ini; yang ada hanya hash SHA-256(salt+password).
+# Cara ganti password (jangan lupa push ke main):
+#   NEW_SALT=$(openssl rand -hex 16)
+#   NEW_HASH=$(printf '%s%s' "$NEW_SALT" "<password-baru>" | sha256sum | awk '{print $1}')
+#   echo "$NEW_SALT" "$NEW_HASH"
+# Lalu replace dua nilai di bawah.
+__RERE_GATE_SALT="463232d0e17b6a2a4afefc0aeb58ccaa"
+__RERE_GATE_HASH="45279dbdc69a0d99b2ea6c194c6129f544f5bc0f8c9cc78ef1cdd3c89fabf038"
+__rere_gate_check() {
+    local _try=0 _pass _calc
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "[gate] sha256sum tidak tersedia, install coreutils dulu." >&2
+        exit 1
+    fi
+    if [ ! -r /dev/tty ]; then
+        echo "[gate] Tidak ada TTY untuk input password. Jalankan langsung (mis. screen -S fn ./install.sh)." >&2
+        exit 1
+    fi
+    while [ "$_try" -lt 3 ]; do
+        printf "Password instalasi: " >/dev/tty
+        IFS= read -r -s _pass </dev/tty
+        printf "\n" >/dev/tty
+        _calc=$(printf '%s%s' "$__RERE_GATE_SALT" "$_pass" | sha256sum | awk '{print $1}')
+        if [ "$_calc" = "$__RERE_GATE_HASH" ]; then
+            unset _pass _calc
+            return 0
+        fi
+        _try=$((_try + 1))
+        printf "Password salah (%d/3).\n" "$_try" >/dev/tty
+    done
+    echo "[gate] Gagal autentikasi. Instalasi dibatalkan." >&2
+    exit 1
+}
+__rere_gate_check
+unset -f __rere_gate_check
+unset __RERE_GATE_SALT __RERE_GATE_HASH
+
 # Define Hosting
 # Set to this fork's raw URL so the xray + httpupgrade assets bundled in this
 # repo (config.json, nginx.conf, main.zip) are actually deployed onto the VPS.
