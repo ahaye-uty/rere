@@ -233,4 +233,18 @@ sed -i '/^echo -e " 12\. Seting SlowDNS/a echo -e " 13. Menu Fail2ban           
 # 2b. Tambah case branch '13) menu-fail2ban' sebelum '*) menu ;;'
 sed -i '/^\*) menu ;;/i 13) menu-fail2ban ;;' "$MENU"
 
-echo "[patch-menu-fail2ban] $MENU: entry + case ditambahkan."
+# Post-patch verifikasi: pastikan entry & case branch BENAR-BENAR ada.
+# Kalau upstream main.zip berubah format (mis. label "12. SlowDNS" diubah),
+# sed di atas tidak match dan entry tidak ke-tambah — tapi exit code tetap 0.
+# Kita catch di sini supaya tidak silent-failure.
+if ! grep -q "Menu Fail2ban" "$MENU"; then
+    echo "[patch-menu-fail2ban] ERROR: gagal menambah entry 'Menu Fail2ban' di $MENU." >&2
+    echo "[patch-menu-fail2ban] Kemungkinan format menu upstream berubah. Cek pattern sed." >&2
+    exit 1
+fi
+if ! grep -q "13) menu-fail2ban" "$MENU"; then
+    echo "[patch-menu-fail2ban] ERROR: gagal menambah case branch '13) menu-fail2ban' di $MENU." >&2
+    exit 1
+fi
+
+echo "[patch-menu-fail2ban] $MENU: entry + case ditambahkan (terverifikasi)."

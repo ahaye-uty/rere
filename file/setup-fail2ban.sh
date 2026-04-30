@@ -20,8 +20,19 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+echo "[setup-fail2ban] apt-get update (defensive, supaya cache fresh)..."
+apt-get update -y >/dev/null 2>&1 || true
+
 echo "[setup-fail2ban] Installing fail2ban..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban >/dev/null
+if ! DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban; then
+    echo "[setup-fail2ban] ERROR: apt-get install fail2ban gagal." >&2
+    exit 1
+fi
+
+if ! command -v fail2ban-client >/dev/null 2>&1; then
+    echo "[setup-fail2ban] ERROR: fail2ban-client tidak ditemukan setelah install." >&2
+    exit 1
+fi
 
 mkdir -p /etc/fail2ban/jail.d
 

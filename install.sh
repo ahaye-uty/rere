@@ -656,46 +656,80 @@ iptables-save > /etc/iptables/rules.v4
 clear
 rm -f /root/*
 
+# ===== Auto-run remote scripts =====
+# CATATAN: jangan pakai `bash <(curl -fsSL URL)` — kalau curl gagal (404,
+# network error, dll) bash tetap exit 0 karena process substitution tidak
+# propagate exit code curl. Akibatnya install keliatan sukses padahal komponen
+# (mis. fail2ban) tidak kepasang. Pakai 2-step: download dulu ke file, cek
+# exit code curl, baru jalankan.
+RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+__rere_run_remote() {
+    local url="$1" tmp rc
+    tmp=$(mktemp /tmp/rere-remote.XXXXXX.sh)
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 91
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 92
+    fi
+    bash "$tmp"
+    rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+__rere_summary=""
+__rere_track() {
+    local name="$1" rc="$2"
+    if [ "$rc" -eq 0 ]; then
+        __rere_summary="${__rere_summary}\n[install]   OK   ${name}"
+    else
+        __rere_summary="${__rere_summary}\n[install]   FAIL ${name} (exit ${rc})"
+    fi
+}
+
 # ===== Auto-run refresh-hup =====
 # Pastikan inbound HTTPUpgrade (/vless-hup, /vmess-hup, /trojan-hup) sudah
-# terpasang dan service xray + nginx sudah disinkronkan. Untuk fresh install
-# dari fork ini, config.json dan nginx.conf sudah membawa HUP, sehingga
-# refresh-hup akan mendeteksi state tersebut dan tidak memodifikasi config
-# lagi (idempotent). Tujuan utamanya: user tidak perlu lagi menjalankan
-# `bash <(curl -sL ...refresh-hup.sh)` secara manual setelah install.
-RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+# terpasang dan service xray + nginx sudah disinkronkan. Idempotent.
 echo "[install] Memverifikasi HTTPUpgrade inbound (auto refresh-hup)..."
-if ! bash <(curl -fsSL "${RERE_HOSTING}/refresh-hup.sh"); then
-    echo "[install] WARNING: refresh-hup gagal dijalankan otomatis."
-    echo "[install] Install tetap dianggap selesai. Jika diperlukan, jalankan manual:"
-    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/refresh-hup.sh)"
-fi
+__rere_run_remote "${RERE_HOSTING}/refresh-hup.sh"
+__rere_track "refresh-hup" $?
 
 # ===== Auto-run fix-ssh-ssl =====
 # Guaranteed-convergent pipeline edge-mux v2 (sslh-public + nginx-stream ALPN
-# router + stunnel + sslh-internal). Idempotent. Tujuan: state akhir identik
-# dengan yang sudah dites user, tanpa user harus apply manual.
+# router + stunnel + sslh-internal). Idempotent.
 echo "[install] Menerapkan edge-mux v2 (auto fix-ssh-ssl)..."
-if ! bash <(curl -fsSL "${RERE_HOSTING}/fix-ssh-ssl.sh"); then
-    echo "[install] WARNING: fix-ssh-ssl gagal dijalankan otomatis."
-    echo "[install] Install tetap dianggap selesai. Jika diperlukan, jalankan manual:"
-    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/fix-ssh-ssl.sh)"
-fi
+__rere_run_remote "${RERE_HOSTING}/fix-ssh-ssl.sh"
+__rere_track "fix-ssh-ssl" $?
 
 # ===== Auto-run setup-fail2ban =====
 # Pasang fail2ban + jail untuk OpenSSH (port 22, 109, 3303) dan Dropbear
 # (port 111). 5x gagal login dalam 10 menit -> ban 1 jam. Localhost di-whitelist
 # supaya sslh-internal yg forward SSH dari 127.0.0.1 tidak ke-ban diri sendiri.
 echo "[install] Memasang fail2ban (auto setup-fail2ban)..."
-if ! bash <(curl -fsSL "${RERE_HOSTING}/setup-fail2ban.sh"); then
-    echo "[install] WARNING: setup-fail2ban gagal dijalankan otomatis."
-    echo "[install] Install tetap dianggap selesai. Jika diperlukan, jalankan manual:"
-    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/setup-fail2ban.sh)"
-fi
+__rere_run_remote "${RERE_HOSTING}/setup-fail2ban.sh"
+__rere_track "setup-fail2ban" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
 echo -e "menu" >> /root/.profile
-clear
-echo -e "Success Install"
-exit 1
+
+# JANGAN `clear` — kita mau ringkasan auto-run tetap visible di layar.
+echo ""
+echo "─────────────────────────────────────────────"
+echo "[install] RINGKASAN AUTO-RUN:"
+echo -e "${__rere_summary}"
+echo "─────────────────────────────────────────────"
+if echo -e "${__rere_summary}" | grep -q "FAIL"; then
+    echo "[install] Ada step yg FAIL. Jalankan manual:"
+    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/refresh-hup.sh)"
+    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/fix-ssh-ssl.sh)"
+    echo "[install]   bash <(curl -sL ${RERE_HOSTING}/setup-fail2ban.sh)"
+fi
+echo ""
+echo "Success Install"
+echo ""
+echo "Tekan Enter untuk lanjut ke menu (ringkasan di atas tetap bisa di-scroll)..."
+read -r __rere_continue 2>/dev/null || true
+exit 0
