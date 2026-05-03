@@ -541,7 +541,7 @@ chmod +x /etc/noobzvpns/*
 cd
 
 # Certificate
-iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2080
+iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2081 2>/dev/null || true
 echo -e "${domain}" > /usr/local/etc/xray/domain
     rm -rf /root/.acme.sh
     mkdir /root/.acme.sh
