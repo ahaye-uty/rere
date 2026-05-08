@@ -1,0 +1,80 @@
+#!/bin/bash
+# ========================================================
+# IP Limiter for SSH/Dropbear (SSH-only, NO iptables)
+# Enforce max simultaneous SSH sessions per user.
+# Per-user limit dari limit-ip.db, fallback ke global default.
+# Dijalankan via cron tiap 1 menit.
+#
+# Cara enforcement:
+#   Hitung child sshd/sshd-session/sshd-auth/dropbear yang
+#   dimiliki user (= jumlah sesi SSH aktif). Kalau lebih dari
+#   limit → kill -9 semua sesi user tsb. User tinggal reconnect
+#   dan sesi balik dalam batas limit.
+#
+# Tidak menggunakan iptables sama sekali → tidak ada risiko
+# block IP HP user / admin sendiri secara permanen.
+# Xray (vmess/vless/trojan) tidak di-limit di sini.
+# ========================================================
+
+LIMIT_FILE="/usr/local/etc/xray/limit-ip"
+DB_FILE="/usr/local/etc/xray/limit-ip.db"
+LOG_FILE="/var/log/limit-ip.log"
+
+# Read global default limit
+if [[ -f "$LIMIT_FILE" ]]; then
+    DEFAULT_LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
+else
+    DEFAULT_LIMIT=2
+fi
+[[ ! "$DEFAULT_LIMIT" =~ ^[0-9]+$ ]] && DEFAULT_LIMIT=2
+[[ "$DEFAULT_LIMIT" -lt 1 ]] && DEFAULT_LIMIT=2
+
+get_user_limit() {
+    local username="$1"
+    if [[ -f "$DB_FILE" ]]; then
+        local db_limit
+        db_limit=$(grep -w "^$username" "$DB_FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+        if [[ "$db_limit" =~ ^[0-9]+$ ]] && [[ "$db_limit" -ge 1 ]]; then
+            echo "$db_limit"
+            return
+        fi
+    fi
+    echo "$DEFAULT_LIMIT"
+}
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# Rotate log if > 1MB
+if [[ -f "$LOG_FILE" ]] && [[ $(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt 1048576 ]]; then
+    tail -n 200 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+fi
+
+get_user_ssh_pids() {
+    local user="$1"
+    ps -u "$user" -o pid=,comm= 2>/dev/null \
+        | awk '$2 ~ /^(sshd|sshd-session|sshd-auth|dropbear)$/ {print $1}'
+}
+
+limit_ssh() {
+    local users
+    users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
+    [[ -z "$users" ]] && return
+
+    for user in $users; do
+        local LIMIT pids count
+        LIMIT=$(get_user_limit "$user")
+        pids=$(get_user_ssh_pids "$user")
+        count=$(echo "$pids" | grep -c .)
+
+        if [[ "$count" -gt "$LIMIT" ]]; then
+            log_msg "SSH LIMIT: user=$user sessions=$count/$LIMIT -> kill"
+            for pid in $pids; do
+                kill -9 "$pid" 2>/dev/null
+            done
+        fi
+    done
+}
+
+limit_ssh

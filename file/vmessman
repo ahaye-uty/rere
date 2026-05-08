@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP="$(basename "$0")"
+
+CONFIG="/usr/local/etc/xray/config.json"
+DOMAIN_FILE="/usr/local/etc/xray/domain"
+SERVICE="xray"
+DEFAULT_DAYS=30
+
+proto_from_name() {
+  case "$APP" in
+    vlessman) echo "vless" ;;
+    vmessman) echo "vmess" ;;
+    trojanman) echo "trojan" ;;
+    *)
+      echo "Nama command harus: vlessman / vmessman / trojanman"
+      exit 1
+      ;;
+  esac
+}
+
+usage() {
+  cat <<EOF2
+Usage:
+  $APP add <username> [days]
+  $APP check <username>
+  $APP renew <username> [days]
+  $APP del <username>
+
+Contoh:
+  $APP add aloi
+  $APP add aloi 30
+  $APP check aloi
+  $APP renew aloi 30
+  $APP del aloi
+EOF2
+  exit 1
+}
+
+need_root() {
+  [[ $EUID -eq 0 ]] || { echo "Jalankan sebagai root"; exit 1; }
+}
+
+need_files() {
+  [[ -f "$CONFIG" ]] || { echo "Config tidak ditemukan: $CONFIG"; exit 1; }
+  [[ -f "$DOMAIN_FILE" ]] || { echo "Domain file tidak ditemukan: $DOMAIN_FILE"; exit 1; }
+}
+
+backup_config() {
+  cp -a "$CONFIG" "${CONFIG}.bak.$(date +%F-%H%M%S)"
+}
+
+restart_service() {
+  systemctl restart "$SERVICE"
+  systemctl is-active --quiet "$SERVICE" || {
+    echo "Service $SERVICE gagal start. Cek:"
+    echo "systemctl status $SERVICE --no-pager -l"
+    exit 1
+  }
+}
+
+valid_user() {
+  [[ "$1" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,31}$ ]]
+}
+
+valid_days() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" > 0 ))
+}
+
+get_marker() {
+  case "$1" in
+    vless)  echo '#&' ;;
+    vmess)  echo '###' ;;
+    trojan) echo '#!' ;;
+  esac
+}
+
+get_anchor() {
+  case "$1" in
+    vless)  echo '#vless$' ;;
+    vmess)  echo '#vmess$' ;;
+    trojan) echo '#trojan$' ;;
+  esac
+}
+
+exists_user() {
+  local proto="$1"
+  local user="$2"
+  local marker
+  marker="$(get_marker "$proto")"
+  grep -qE "^${marker}[[:space:]]+${user}[[:space:]]+" "$CONFIG"
+}
+
+domain_name() {
+  cat "$DOMAIN_FILE"
+}
+
+uuid_new() {
+  cat /proc/sys/kernel/random/uuid
+}
+
+exp_date() {
+  local days="$1"
+  date -d "$days days" +%Y-%m-%d
+}
+
+current_exp_for() {
+  local proto="$1"
+  local user="$2"
+  local marker
+  marker="$(get_marker "$proto")"
+  awk -v m="$marker" -v u="$user" '$1==m && $2==u {print $3; exit}' "$CONFIG"
+}
+
+calc_renew_exp() {
+  local current_exp="$1"
+  local days="$2"
+  local today epoch_today epoch_current base_date
+
+  today="$(date +%Y-%m-%d)"
+  epoch_today="$(date -d "$today" +%s)"
+
+  if [[ -n "$current_exp" ]] && date -d "$current_exp" >/dev/null 2>&1; then
+    epoch_current="$(date -d "$current_exp" +%s)"
+    if (( epoch_current > epoch_today )); then
+      base_date="$current_exp"
+    else
+      base_date="$today"
+    fi
+  else
+    base_date="$today"
+  fi
+
+  date -d "$base_date +$days days" +%Y-%m-%d
+}
+
+add_vless() {
+  local user="$1"
+  local days="$2"
+  local exp uuid
+  exp="$(exp_date "$days")"
+  uuid="$(uuid_new)"
+
+  backup_config
+  sed -i "/$(get_anchor vless)/a\\#& ${user} ${exp}\\n},{\"id\": \"${uuid}\",\"email\": \"${user}\"" "$CONFIG"
+  restart_service
+
+  echo "=== VLESS CREATED ==="
+  echo "User : $user"
+  echo "UUID : $uuid"
+  echo "Exp  : $exp"
+  echo "Host : $(domain_name)"
+}
+
+add_vmess() {
+  local user="$1"
+  local days="$2"
+  local exp uuid
+  exp="$(exp_date "$days")"
+  uuid="$(uuid_new)"
+
+  backup_config
+  sed -i "/$(get_anchor vmess)/a\\### ${user} ${exp}\\n},{\"id\": \"${uuid}\",\"alterId\": 0,\"email\": \"${user}\"" "$CONFIG"
+  restart_service
+
+  echo "=== VMESS CREATED ==="
+  echo "User : $user"
+  echo "UUID : $uuid"
+  echo "Exp  : $exp"
+  echo "Host : $(domain_name)"
+}
+
+add_trojan() {
+  local user="$1"
+  local days="$2"
+  local exp
+  exp="$(exp_date "$days")"
+
+  backup_config
+  sed -i "/$(get_anchor trojan)/a\\#! ${user} ${exp}\\n},{\"password\": \"${user}\",\"email\": \"${user}\"" "$CONFIG"
+  restart_service
+
+  echo "=== TROJAN CREATED ==="
+  echo "User     : $user"
+  echo "Password : $user"
+  echo "Exp      : $exp"
+  echo "Host     : $(domain_name)"
+}
+
+check_user() {
+  local proto="$1"
+  local user="$2"
+  local marker
+  marker="$(get_marker "$proto")"
+
+  if ! exists_user "$proto" "$user"; then
+    echo "User '$user' tidak ditemukan di $proto"
+    exit 1
+  fi
+
+  echo "=== ${proto^^} USER ==="
+  grep -E "^${marker}[[:space:]]+${user}[[:space:]]+" "$CONFIG" | sort -u
+
+  echo
+  echo "=== CONFIG MATCH ==="
+  case "$proto" in
+    vless|vmess)
+      grep -nF "\"email\": \"$user\"" "$CONFIG" || true
+      ;;
+    trojan)
+      grep -nE "\"password\": \"$user\"|\"email\": \"$user\"" "$CONFIG" || true
+      ;;
+  esac
+}
+
+renew_user() {
+  local proto="$1"
+  local user="$2"
+  local days="$3"
+  local marker old_exp new_exp
+  marker="$(get_marker "$proto")"
+
+  if ! exists_user "$proto" "$user"; then
+    echo "User '$user' tidak ditemukan di $proto"
+    exit 1
+  fi
+
+  old_exp="$(current_exp_for "$proto" "$user")"
+  new_exp="$(calc_renew_exp "$old_exp" "$days")"
+
+  backup_config
+  sed -i -E "s|^(${marker}[[:space:]]+${user}[[:space:]]+)[0-9]{4}-[0-9]{2}-[0-9]{2}$|\\1${new_exp}|" "$CONFIG"
+
+  echo "=== ${proto^^} RENEWED ==="
+  echo "User    : $user"
+  echo "Old Exp : ${old_exp:-unknown}"
+  echo "Add Days: $days"
+  echo "New Exp : $new_exp"
+}
+
+del_user() {
+  local proto="$1"
+  local user="$2"
+  local marker
+  marker="$(get_marker "$proto")"
+
+  if ! exists_user "$proto" "$user"; then
+    echo "User '$user' tidak ditemukan di $proto"
+    exit 1
+  fi
+
+  backup_config
+
+  sed -i "\|^${marker}[[:space:]]\+${user}[[:space:]]\+|d" "$CONFIG"
+
+  case "$proto" in
+    vless|vmess)
+      sed -i "\|\"email\": \"${user}\"|d" "$CONFIG"
+      ;;
+    trojan)
+      sed -i "\|\"password\": \"${user}\"|d" "$CONFIG"
+      sed -i "\|\"email\": \"${user}\"|d" "$CONFIG"
+      ;;
+  esac
+
+  restart_service
+  echo "User '$user' berhasil dihapus dari $proto"
+}
+
+main() {
+  need_root
+  need_files
+  [[ $# -ge 2 ]] || usage
+
+  local proto action user days
+  proto="$(proto_from_name)"
+  action="$1"
+  user="$2"
+  days="${3:-$DEFAULT_DAYS}"
+
+  valid_user "$user" || {
+    echo "Username tidak valid. Gunakan huruf/angka/underscore/dot/dash, max 32 char."
+    exit 1
+  }
+
+  case "$action" in
+    add)
+      valid_days "$days" || { echo "Days harus angka > 0"; exit 1; }
+      exists_user "$proto" "$user" && {
+        echo "User '$user' sudah ada di $proto"
+        exit 1
+      }
+      case "$proto" in
+        vless)  add_vless "$user" "$days" ;;
+        vmess)  add_vmess "$user" "$days" ;;
+        trojan) add_trojan "$user" "$days" ;;
+      esac
+      ;;
+    check)
+      check_user "$proto" "$user"
+      ;;
+    renew)
+      valid_days "$days" || { echo "Days harus angka > 0"; exit 1; }
+      renew_user "$proto" "$user" "$days"
+      ;;
+    del|delete|rm)
+      del_user "$proto" "$user"
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main "$@"

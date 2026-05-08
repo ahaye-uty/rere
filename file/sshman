@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-}"
+USER="${2:-}"
+PASS="${3:-}"
+IPLIMIT="${4:-2}"
+[[ "$IPLIMIT" != "1" ]] && IPLIMIT=2
+
+DB_FILE="/usr/local/etc/xray/limit-ip.db"
+
+usage() {
+  echo "Usage:"
+  echo "  sshman add <username> <password> [iplimit 1/2]"
+  echo "  sshman check <username>"
+  echo "  sshman del <username>"
+  echo "  sshman unlock <username>"
+  exit 1
+}
+
+[[ -z "$CMD" || -z "${USER:-}" ]] && usage
+
+if ! [[ "$USER" =~ ^[a-zA-Z0-9_]{3,32}$ ]]; then
+  echo "Username invalid (a-zA-Z0-9_ panjang 3-32)"
+  exit 1
+fi
+
+user_exists() { id "$USER" &>/dev/null; }
+
+do_unlock() {
+  passwd -u "$USER" &>/dev/null || true
+  if command -v faillock &>/dev/null; then
+    faillock --user "$USER" --reset &>/dev/null || true
+  fi
+  if command -v pam_tally2 &>/dev/null; then
+    pam_tally2 -u "$USER" -r &>/dev/null || true
+  fi
+}
+
+make_permanent() {
+  chage -E -1 "$USER" &>/dev/null || true
+  chage -M 99999 -m 0 -I -1 "$USER" &>/dev/null || true
+}
+
+case "$CMD" in
+  add)
+    [[ -z "${PASS:-}" ]] && usage
+    user_exists && { echo "User already exists"; exit 1; }
+
+    useradd -M -N -s /usr/sbin/nologin "$USER"
+    echo "${USER}:${PASS}" | chpasswd
+
+    make_permanent
+    do_unlock
+    mkdir -p "$(dirname "$DB_FILE")" 2>/dev/null || true
+    touch "$DB_FILE" 2>/dev/null || true
+    sed -i "/^$USER /d" "$DB_FILE" 2>/dev/null || true
+    echo "$USER $IPLIMIT" >> "$DB_FILE"
+    echo "Added SSH: $USER (limit: $IPLIMIT IP)"
+    ;;
+
+  check)
+    user_exists || { echo "Not found"; exit 1; }
+    passwd -S "$USER" || true
+    st="$(passwd -S "$USER" 2>/dev/null | awk '{print $2}' || true)"
+    if [[ "$st" == "L" ]]; then
+      echo "SSH LOCKED: $USER"
+      echo "Coba: sshman unlock $USER"
+      exit 0
+    fi
+    echo "SSH OK: $USER"
+    ;;
+
+  del)
+    user_exists || { echo "Not found"; exit 1; }
+    do_unlock
+    userdel "$USER" &>/dev/null || true
+    sed -i "/^$USER /d" "$DB_FILE" 2>/dev/null || true
+    echo "Deleted SSH: $USER"
+    ;;
+
+  unlock)
+    user_exists || { echo "Not found"; exit 1; }
+    do_unlock
+    make_permanent
+    passwd -S "$USER" || true
+    echo "Unlocked SSH: $USER"
+    ;;
+
+  *) usage ;;
+esac
