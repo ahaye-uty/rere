@@ -477,13 +477,6 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
-# Account managers
-wget -q -O /usr/local/bin/sshman "${hosting}/sshman"
-wget -q -O /usr/local/sbin/vmessman "${hosting}/vmessman"
-wget -q -O /usr/local/sbin/vlessman "${hosting}/vlessman"
-wget -q -O /usr/local/sbin/trojanman "${hosting}/trojanman"
-chmod +x /usr/local/bin/sshman /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/trojanman
-
 # Cron
 apt install cron -y
 echo -e "

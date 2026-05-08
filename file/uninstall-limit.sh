@@ -2,14 +2,20 @@
 # ========================================================
 # uninstall-limit.sh
 #
-# Hapus tuntas fitur IP limit dari server:
+# Hapus tuntas fitur IP limit + CLI account manager wrapper
+# (sshman/vmessman/vlessman/trojanman) yang ditambahin
+# bersamaan dengan fitur limit:
 #   1. Flush iptables LIMIT-IP chain (unblock semua IP)
 #   2. Hapus cron entry limit-ip
 #   3. Hapus file limit-ip / cek-limit / set-limit
 #   4. Hapus DB & config limit-ip
 #   5. Hapus entry "Cek IP Limit" / "Set IP Limit" dari menu
 #   6. Hapus prompt "Limit IP" dari add-ssh / add-vmess / add-vless / add-tr
-#   7. Re-download sshman / vmessman / vlessman / trojanman versi tanpa limit
+#   7. Hapus sshman / vmessman / vlessman / trojanman
+#
+# Akun yang sudah dibuat (SSH user di /etc/passwd, vmess/vless/
+# trojan di xray config.json) TIDAK disentuh. Untuk add account
+# baru, pakai menu standar (option add-ssh / add-vmess / dst).
 #
 # Idempotent: aman di-run berkali-kali.
 #
@@ -18,9 +24,6 @@
 # ========================================================
 
 set -e
-
-# Branch sumber file pengganti sshman/vmessman/dst (tanpa fitur limit)
-HOSTING="${HOSTING:-https://raw.githubusercontent.com/ahaye-uty/rere/main/file}"
 
 echo "[uninstall-limit] Mulai cleanup IP limit..."
 
@@ -77,14 +80,18 @@ for DIR in /usr/local/sbin /usr/local/bin; do
     done
 done
 
-# 7. Re-download sshman / vmessman / vlessman / trojanman versi tanpa limit
-echo "[uninstall-limit] Re-download sshman/vmessman/vlessman/trojanman..."
-wget -q -O /usr/local/bin/sshman      "${HOSTING}/sshman"      && chmod +x /usr/local/bin/sshman
-wget -q -O /usr/local/sbin/vmessman   "${HOSTING}/vmessman"    && chmod +x /usr/local/sbin/vmessman
-wget -q -O /usr/local/sbin/vlessman   "${HOSTING}/vlessman"    && chmod +x /usr/local/sbin/vlessman
-wget -q -O /usr/local/sbin/trojanman  "${HOSTING}/trojanman"   && chmod +x /usr/local/sbin/trojanman
+# 7. Hapus CLI account manager (ditambahin bersama fitur limit)
+echo "[uninstall-limit] Hapus sshman/vmessman/vlessman/trojanman..."
+rm -f /usr/local/bin/sshman   /usr/local/sbin/sshman
+rm -f /usr/local/bin/vmessman /usr/local/sbin/vmessman
+rm -f /usr/local/bin/vlessman /usr/local/sbin/vlessman
+rm -f /usr/local/bin/trojanman /usr/local/sbin/trojanman
 
 echo "[uninstall-limit] Selesai. Verifikasi:"
 echo "  - iptables -L LIMIT-IP -n 2>&1 | head -3"
 echo "  - grep limit-ip /etc/crontab || echo '(no cron entry)'"
-echo "  - sshman / vmessman tanpa flag iplimit"
+echo "  - which sshman vmessman vlessman trojanman || echo '(removed)'"
+echo
+echo "Untuk add account baru, pakai menu standar:"
+echo "  - add-ssh   (atau pilih dari menu utama)"
+echo "  - add-vmess / add-vless / add-tr (atau pilih dari menu utama)"
