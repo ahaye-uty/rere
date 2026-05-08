@@ -4,14 +4,10 @@ set -euo pipefail
 CMD="${1:-}"
 USER="${2:-}"
 PASS="${3:-}"
-IPLIMIT="${4:-2}"
-[[ "$IPLIMIT" != "1" ]] && IPLIMIT=2
-
-DB_FILE="/usr/local/etc/xray/limit-ip.db"
 
 usage() {
   echo "Usage:"
-  echo "  sshman add <username> <password> [iplimit 1/2]"
+  echo "  sshman add <username> <password>"
   echo "  sshman check <username>"
   echo "  sshman del <username>"
   echo "  sshman unlock <username>"
@@ -52,10 +48,7 @@ case "$CMD" in
 
     make_permanent
     do_unlock
-    # Save IP limit to DB
-    sed -i "/^$USER /d" "$DB_FILE" 2>/dev/null || true
-    echo "$USER $IPLIMIT" >> "$DB_FILE"
-    echo "✅  Added SSH: $USER (limit: $IPLIMIT IP)"
+    echo "✅  Added SSH: $USER"
     ;;
 
   check)

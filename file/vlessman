@@ -23,7 +23,7 @@ proto_from_name() {
 usage() {
   cat <<EOF2
 Usage:
-  $APP add <username> [days] [iplimit 1/2]
+  $APP add <username> [days]
   $APP check <username>
   $APP renew <username> [days]
   $APP del <username>
@@ -31,7 +31,6 @@ Usage:
 Contoh:
   $APP add aloi
   $APP add aloi 30
-  $APP add aloi 30 1
   $APP check aloi
   $APP renew aloi 30
   $APP del aloi
@@ -274,15 +273,11 @@ main() {
   need_files
   [[ $# -ge 2 ]] || usage
 
-  local proto action user days iplimit
+  local proto action user days
   proto="$(proto_from_name)"
   action="$1"
   user="$2"
   days="${3:-$DEFAULT_DAYS}"
-  iplimit="${4:-2}"
-  [[ "$iplimit" != "1" ]] && iplimit=2
-
-  local DB_FILE="/usr/local/etc/xray/limit-ip.db"
 
   valid_user "$user" || {
     echo "Username tidak valid. Gunakan huruf/angka/underscore/dot/dash, max 32 char."
@@ -301,10 +296,6 @@ main() {
         vmess)  add_vmess "$user" "$days" ;;
         trojan) add_trojan "$user" "$days" ;;
       esac
-      # Save IP limit to DB
-      sed -i "/^$user /d" "$DB_FILE" 2>/dev/null || true
-      echo "$user $iplimit" >> "$DB_FILE"
-      echo "Limit: $iplimit IP"
       ;;
     check)
       check_user "$proto" "$user"
