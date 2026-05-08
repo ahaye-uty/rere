@@ -30,32 +30,44 @@ if [[ -f "$LOG_FILE" ]] && [[ $(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt
 fi
 
 # ===== SSH / Dropbear Limiter =====
+# Uses auth.log to find IPs per active session (same method as cek-ssh)
 limit_ssh() {
+    local AUTH_LOG="/var/log/auth.log"
+    [[ -f "/var/log/secure" ]] && AUTH_LOG="/var/log/secure"
+    [[ ! -f "$AUTH_LOG" ]] && return
+
     local users
     users=$(awk -F: '$7=="/bin/false" {print $1}' /etc/passwd)
     [[ -z "$users" ]] && return
 
+    # Cache auth.log entries for speed
+    grep -i "Accepted password for\|Password auth succeeded" "$AUTH_LOG" > /tmp/.limit-ip-auth.tmp 2>/dev/null
+
     for user in $users; do
-        # Unique IPs from active OpenSSH sessions
-        local ssh_ips
-        ssh_ips=$(ps aux 2>/dev/null | grep "sshd:.*${user}@" | grep -v grep | awk '{print $NF}' | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
+        local user_ips=""
 
-        # Unique IPs from active Dropbear sessions
-        local db_ips=""
-        if [[ -f "/var/log/auth.log" ]]; then
-            local db_pids
-            db_pids=$(ps aux 2>/dev/null | grep -i "[d]ropbear" | awk '{print $2}')
-            for pid in $db_pids; do
-                local ip
-                ip=$(grep "dropbear\[$pid\]" /var/log/auth.log 2>/dev/null | grep "Password auth succeeded" | grep -w "$user" | awk '{print $12}' | tail -1)
-                [[ -n "$ip" ]] && db_ips="$db_ips $ip"
-            done
-        fi
+        # OpenSSH: get active privileged PIDs, look up user+IP from auth.log
+        local ssh_pids
+        ssh_pids=$(ps aux 2>/dev/null | grep "\[priv\]" | grep -v grep | awk '{print $2}')
+        for pid in $ssh_pids; do
+            local ip
+            ip=$(grep "sshd\[$pid\]" /tmp/.limit-ip-auth.tmp 2>/dev/null | grep "Accepted password for $user " | awk '{print $11}' | tail -1)
+            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
+        done
 
-        # Combine and count unique IPs
-        local all_ips unique_count
-        all_ips=$(echo -e "${ssh_ips}\n${db_ips}" | tr ' ' '\n' | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
-        unique_count=$(echo "$all_ips" | grep -c .)
+        # Dropbear: get active PIDs, look up user+IP from auth.log
+        local db_pids
+        db_pids=$(ps aux 2>/dev/null | grep -i "[d]ropbear" | awk '{print $2}')
+        for pid in $db_pids; do
+            local ip
+            ip=$(grep "dropbear\[$pid\]" /tmp/.limit-ip-auth.tmp 2>/dev/null | grep -w "$user" | awk '{print $12}' | tail -1)
+            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
+        done
+
+        # Count unique IPs
+        local unique_ips unique_count
+        unique_ips=$(echo "$user_ips" | tr ' ' '\n' | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
+        unique_count=$(echo "$unique_ips" | grep -c .)
 
         if [[ "$unique_count" -gt "$LIMIT" ]]; then
             log_msg "SSH LIMIT: user=$user ips=$unique_count/$LIMIT -> kill"
@@ -63,9 +75,12 @@ limit_ssh() {
             pkill -u "$user" dropbear 2>/dev/null
         fi
     done
+
+    rm -f /tmp/.limit-ip-auth.tmp
 }
 
 # ===== Xray Limiter (iptables-based, no xray restart needed) =====
+# Uses access.log to find IPs per user (same method as cek-vmess/cek-vless)
 limit_xray() {
     local access_log="/var/log/xray/access.log"
     [[ ! -f "$access_log" ]] && return
@@ -78,15 +93,15 @@ limit_xray() {
     # Flush old rules (re-evaluate every run)
     iptables -F "$CHAIN_NAME" 2>/dev/null
 
-    # Get all xray users from config
+    # Get all xray users from config (### = vmess, #& = vless, #! = trojan)
     local all_users
     all_users=$(grep -E '^(###|#&|#!) ' /usr/local/etc/xray/config.json 2>/dev/null | awk '{print $2}' | sort -u)
     [[ -z "$all_users" ]] && return
 
     for user in $all_users; do
-        # Get unique source IPs for this user from recent access log
+        # Get unique source IPs (same parsing as cek-vmess: field 3, strip tcp:, get IP before port)
         local user_ips
-        user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | awk '{print $3}' | sed 's|tcp://||g; s|udp://||g' | cut -d: -f1 | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
+        user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
 
         local ip_count
         ip_count=$(echo "$user_ips" | grep -c .)
@@ -94,9 +109,8 @@ limit_xray() {
 
         log_msg "XRAY LIMIT: user=$user ips=$ip_count/$LIMIT -> blocking excess"
 
-        # Keep only the first $LIMIT IPs (most seen = allowed), block the rest
-        local allowed blocked
-        allowed=$(echo "$user_ips" | head -n "$LIMIT")
+        # Keep the first $LIMIT IPs, block the rest
+        local blocked
         blocked=$(echo "$user_ips" | tail -n +"$((LIMIT + 1))")
 
         for ip in $blocked; do
