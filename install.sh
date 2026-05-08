@@ -477,12 +477,25 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
+# IP Limiter (SSH only) - per-user limit (1 or 2 IP)
+# NOTE: hanya untuk SSH/Dropbear. Tidak menyentuh iptables sama
+# sekali (enforce via kill child sshd/dropbear). Xray tidak di-limit.
+mkdir -p /usr/local/etc/xray
+wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
+wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
+wget -q -O /usr/local/sbin/set-limit "${hosting}/set-limit.sh"
+wget -q -O /usr/local/bin/sshman   "${hosting}/sshman"
+chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit /usr/local/bin/sshman
+[[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
+[[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
+
 # Cron
 apt install cron -y
 echo -e "
 */15 * * * * root echo -n > /var/log/xray/access.log
 */15 * * * * root xp
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
+*/1 * * * * root /usr/local/bin/limit-ip
 " >> /etc/crontab
 systemctl daemon-reload
 systemctl restart cron
@@ -726,6 +739,14 @@ __rere_track "patch-menu-fail2ban" $?
 
 __rere_run_remote "${RERE_HOSTING}/patch-menu-misc.sh" /usr/local/sbin
 __rere_track "patch-menu-misc" $?
+
+# Patch menu utama: tambah option 14 (Cek IP Limit) + 15 (Set IP Limit).
+__rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
+__rere_track "patch-menu-limit" $?
+
+# Patch add-ssh & add-ssh-gege: prompt "Limit IP (1/2)" saat buat akun.
+__rere_run_remote "${RERE_HOSTING}/patch-add-limit.sh" /usr/local/sbin
+__rere_track "patch-add-limit" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
