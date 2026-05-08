@@ -480,7 +480,8 @@ systemctl enable udp-custom &>/dev/null
 # IP Limiter (SSH & Xray) - per-user limit (1 or 2 IP)
 wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
 wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
-chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit
+wget -q -O /usr/local/sbin/set-limit "${hosting}/set-limit.sh"
+chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit
 echo "2" > /usr/local/etc/xray/limit-ip
 touch /usr/local/etc/xray/limit-ip.db
 
