@@ -2,18 +2,34 @@
 # ========================================================
 # Cek IP Limit - Tampilkan status IP per user
 # Menunjukkan user yang melebihi limit (bandel)
+# Supports per-user limit dari limit-ip.db
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
+DB_FILE="/usr/local/etc/xray/limit-ip.db"
 LOG_FILE="/var/log/limit-ip.log"
 
-# Read limit
+# Read global default limit
 if [[ -f "$LIMIT_FILE" ]]; then
-    LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
+    DEFAULT_LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
 else
-    LIMIT=2
+    DEFAULT_LIMIT=2
 fi
-[[ ! "$LIMIT" =~ ^[0-9]+$ ]] && LIMIT=2
+[[ ! "$DEFAULT_LIMIT" =~ ^[0-9]+$ ]] && DEFAULT_LIMIT=2
+
+# Get per-user limit (from DB, fallback to global default)
+get_user_limit() {
+    local username="$1"
+    if [[ -f "$DB_FILE" ]]; then
+        local db_limit
+        db_limit=$(grep -w "^$username" "$DB_FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+        if [[ "$db_limit" =~ ^[0-9]+$ ]] && [[ "$db_limit" -ge 1 ]]; then
+            echo "$db_limit"
+            return
+        fi
+    fi
+    echo "$DEFAULT_LIMIT"
+}
 
 RED='\e[31m'
 GREEN='\e[32m'
@@ -25,7 +41,7 @@ BOLD='\e[1m'
 clear
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "           ${BOLD}CEK IP LIMIT PER USER${NC}"
-echo -e "           Limit aktif: ${CYAN}${LIMIT} IP${NC} per user"
+echo -e "           Default limit: ${CYAN}${DEFAULT_LIMIT} IP${NC} per user"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ===== SSH =====
@@ -48,6 +64,7 @@ if [[ -f "$AUTH_LOG" ]]; then
 
     for user in $users; do
         user_ips=""
+        user_limit=$(get_user_limit "$user")
 
         for pid in $ssh_pids; do
             ip=$(grep "sshd\[$pid\]" /tmp/.cek-limit-auth.tmp 2>/dev/null | grep "Accepted password for $user " | awk '{print $11}' | tail -1)
@@ -64,14 +81,14 @@ if [[ -f "$AUTH_LOG" ]]; then
 
         if [[ "$ip_count" -gt 0 ]]; then
             ssh_total=$((ssh_total + 1))
-            if [[ "$ip_count" -gt "$LIMIT" ]]; then
+            if [[ "$ip_count" -gt "$user_limit" ]]; then
                 ssh_bandel=$((ssh_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} — ${RED}$ip_count${NC}/$LIMIT IP"
+                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} — ${RED}$ip_count${NC}/${user_limit} IP"
                 echo "$unique_ips" | while read -r ip; do
                     echo -e "         └─ $ip"
                 done
             else
-                echo -e " ${GREEN}[OK]${NC}   $user — ${GREEN}$ip_count${NC}/$LIMIT IP"
+                echo -e " ${GREEN}[OK]${NC}   $user — ${GREEN}$ip_count${NC}/${user_limit} IP"
                 echo "$unique_ips" | while read -r ip; do
                     echo -e "         └─ $ip"
                 done
@@ -98,6 +115,7 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
     all_users=$(grep -E '^(###|#&|#!) ' /usr/local/etc/xray/config.json 2>/dev/null | awk '{print $2}' | sort -u)
 
     for user in $all_users; do
+        user_limit=$(get_user_limit "$user")
         user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
         ip_count=$(echo "$user_ips" | grep -c .)
 
@@ -110,14 +128,14 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
             grep -q "^#& $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="vless"
             grep -q "^#! $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="trojan"
 
-            if [[ "$ip_count" -gt "$LIMIT" ]]; then
+            if [[ "$ip_count" -gt "$user_limit" ]]; then
                 xray_bandel=$((xray_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$ip_count${NC}/$LIMIT IP"
+                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$ip_count${NC}/${user_limit} IP"
                 echo "$user_ips" | while read -r ip; do
                     echo -e "         └─ $ip"
                 done
             else
-                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$ip_count${NC}/$LIMIT IP"
+                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$ip_count${NC}/${user_limit} IP"
                 echo "$user_ips" | while read -r ip; do
                     echo -e "         └─ $ip"
                 done
@@ -135,13 +153,11 @@ echo ""
 echo -e " ${BOLD}═══ NoobzVPN ═══${NC}"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-DB_FILE="/etc/noobzvpns/db_user.json"
-noobz_bandel=0
-noobz_total=0
+NZ_DB="/etc/noobzvpns/db_user.json"
 
-if [[ -f "$DB_FILE" ]] && command -v jq &>/dev/null; then
-    jq -r '.users | keys[]' "$DB_FILE" 2>/dev/null | while read username; do
-        user_info=$(jq -r ".users[\"$username\"]" "$DB_FILE")
+if [[ -f "$NZ_DB" ]] && command -v jq &>/dev/null; then
+    jq -r '.users | keys[]' "$NZ_DB" 2>/dev/null | while read username; do
+        user_info=$(jq -r ".users[\"$username\"]" "$NZ_DB")
         devices=$(echo "$user_info" | jq -r ".devices")
         active_devices=$(echo "$user_info" | jq -r '.statistic.active_devices[]?' 2>/dev/null)
         active_count=$(echo "$active_devices" | grep -c . 2>/dev/null)

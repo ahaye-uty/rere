@@ -477,11 +477,12 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
-# IP Limiter (SSH & Xray) - default 2 IP per user
+# IP Limiter (SSH & Xray) - per-user limit (1 or 2 IP)
 wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
 wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
 chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit
 echo "2" > /usr/local/etc/xray/limit-ip
+touch /usr/local/etc/xray/limit-ip.db
 
 # Cron
 apt install cron -y
@@ -736,6 +737,9 @@ __rere_track "patch-menu-misc" $?
 
 __rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
 __rere_track "patch-menu-limit" $?
+
+__rere_run_remote "${RERE_HOSTING}/patch-add-limit.sh" /usr/local/sbin
+__rere_track "patch-add-limit" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."

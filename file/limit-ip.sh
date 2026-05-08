@@ -2,23 +2,38 @@
 # ========================================================
 # IP Limiter for SSH & Xray
 # Enforce max simultaneous IP connections per user
-# Default: 2 IP / user
+# Supports per-user limit (1 or 2 IP) from limit-ip.db
+# Fallback to global default from limit-ip file
 # Runs via cron every 1 minute
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
+DB_FILE="/usr/local/etc/xray/limit-ip.db"
 LOG_FILE="/var/log/limit-ip.log"
 CHAIN_NAME="LIMIT-IP"
 
-# Read limit (default 2)
+# Read global default limit
 if [[ -f "$LIMIT_FILE" ]]; then
-    LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
+    DEFAULT_LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
 else
-    LIMIT=2
+    DEFAULT_LIMIT=2
 fi
+[[ ! "$DEFAULT_LIMIT" =~ ^[0-9]+$ ]] && DEFAULT_LIMIT=2
+[[ "$DEFAULT_LIMIT" -lt 1 ]] && DEFAULT_LIMIT=2
 
-[[ ! "$LIMIT" =~ ^[0-9]+$ ]] && LIMIT=2
-[[ "$LIMIT" -lt 1 ]] && LIMIT=2
+# Get per-user limit (from DB, fallback to global default)
+get_user_limit() {
+    local username="$1"
+    if [[ -f "$DB_FILE" ]]; then
+        local db_limit
+        db_limit=$(grep -w "^$username" "$DB_FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+        if [[ "$db_limit" =~ ^[0-9]+$ ]] && [[ "$db_limit" -ge 1 ]]; then
+            echo "$db_limit"
+            return
+        fi
+    fi
+    echo "$DEFAULT_LIMIT"
+}
 
 log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -45,6 +60,8 @@ limit_ssh() {
 
     for user in $users; do
         local user_ips=""
+        local LIMIT
+        LIMIT=$(get_user_limit "$user")
 
         # OpenSSH: get active privileged PIDs, look up user+IP from auth.log
         local ssh_pids
@@ -99,6 +116,9 @@ limit_xray() {
     [[ -z "$all_users" ]] && return
 
     for user in $all_users; do
+        local LIMIT
+        LIMIT=$(get_user_limit "$user")
+
         # Get unique source IPs (same parsing as cek-vmess: field 3, strip tcp:, get IP before port)
         local user_ips
         user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
