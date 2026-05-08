@@ -479,7 +479,8 @@ systemctl enable udp-custom &>/dev/null
 
 # IP Limiter (SSH & Xray) - default 2 IP per user
 wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
-chmod +x /usr/local/bin/limit-ip
+wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
+chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit
 echo "2" > /usr/local/etc/xray/limit-ip
 
 # Cron
@@ -732,6 +733,9 @@ __rere_track "patch-menu-fail2ban" $?
 
 __rere_run_remote "${RERE_HOSTING}/patch-menu-misc.sh" /usr/local/sbin
 __rere_track "patch-menu-misc" $?
+
+__rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
+__rere_track "patch-menu-limit" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
