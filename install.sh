@@ -485,7 +485,11 @@ wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
 wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
 wget -q -O /usr/local/sbin/set-limit "${hosting}/set-limit.sh"
 wget -q -O /usr/local/bin/sshman   "${hosting}/sshman"
+wget -q -O /usr/local/sbin/vmessman  "${hosting}/vmessman"
+wget -q -O /usr/local/sbin/vlessman  "${hosting}/vlessman"
+wget -q -O /usr/local/sbin/trojanman "${hosting}/trojanman"
 chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit /usr/local/bin/sshman
+chmod +x /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/trojanman
 [[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
 [[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
 
