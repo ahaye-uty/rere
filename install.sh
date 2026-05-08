@@ -53,7 +53,7 @@ unset __RERE_GATE_SALT __RERE_GATE_HASH
 # The previous upstream (mousethain/rere) still hosts the v2ray-era assets
 # without httpupgrade inbounds / locations, which silently breaks the
 # httpupgrade transport even though the install.sh logic has been migrated.
-hosting="https://raw.githubusercontent.com/SukiSuki40/rere/main/file"
+hosting="https://raw.githubusercontent.com/ahaye-uty/rere/main/file"
 
 if [ -f "/usr/local/etc/xray/domain" ]; then
 echo "Script Already Installed"
@@ -203,7 +203,7 @@ rm -f m.zip
 
 # Patch port info di add-ssh / add-ssh-gege supaya cocok dengan
 # arsitektur edge-mux (SSH Direct + SSH SSL/TLS multiport).
-RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+RERE_HOSTING="https://raw.githubusercontent.com/ahaye-uty/rere/main/file"
 wget -q -O /tmp/patch-menu-ports.sh "${RERE_HOSTING}/patch-menu-ports.sh" \
     && bash /tmp/patch-menu-ports.sh /usr/local/sbin \
     || echo "[install] WARNING: gagal apply patch-menu-ports.sh (skip)"
@@ -679,7 +679,7 @@ rm -f /root/*
 # propagate exit code curl. Akibatnya install keliatan sukses padahal komponen
 # (mis. fail2ban) tidak kepasang. Pakai 2-step: download dulu ke file, cek
 # exit code curl, baru jalankan.
-RERE_HOSTING="https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/file"
+RERE_HOSTING="https://raw.githubusercontent.com/ahaye-uty/rere/main/file"
 __rere_run_remote() {
     local url="$1" tmp rc
     shift
