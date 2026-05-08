@@ -481,7 +481,12 @@ systemctl enable udp-custom &>/dev/null
 wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
 wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
 wget -q -O /usr/local/sbin/set-limit "${hosting}/set-limit.sh"
+wget -q -O /usr/local/sbin/sshman "${hosting}/sshman"
+wget -q -O /usr/local/sbin/vmessman "${hosting}/vmessman"
+wget -q -O /usr/local/sbin/vlessman "${hosting}/vlessman"
+wget -q -O /usr/local/sbin/trojanman "${hosting}/trojanman"
 chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit
+chmod +x /usr/local/sbin/sshman /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/trojanman
 echo "2" > /usr/local/etc/xray/limit-ip
 touch /usr/local/etc/xray/limit-ip.db
 
