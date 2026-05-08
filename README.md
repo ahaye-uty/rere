@@ -17,6 +17,10 @@
 
 > [**Install**](#Install)
 
+> [**IP Limit (SSH only)**](#-ip-limit-ssh-only)
+
+> [**Account Manager CLI**](#-account-manager-cli)
+
 > [**Port Information**](#Port-Information)
 
 > [**Donate**](#Donate)
@@ -32,15 +36,64 @@ This autoscript is a lifetime free autoscript with simple xray x noobzvpns multi
 
 ``🚀 Installation Guide``
 ```html
-apt update && apt install wget curl screen gnupg openssl perl binutils -y && wget -O install.sh "https://raw.githubusercontent.com/sugengagung2020-maker/rere/main/install.sh" && chmod +x install.sh && screen -S fn ./install.sh; if [ $? -ne 0 ]; then rm -f install.sh; fi
+apt update && apt install wget curl screen gnupg openssl perl binutils -y && wget -O install.sh "https://raw.githubusercontent.com/ahaye-uty/rere/main/install.sh" && chmod +x install.sh && screen -S fn ./install.sh; if [ $? -ne 0 ]; then rm -f install.sh; fi
 ```
 
-> Cukup satu command di atas. Inbound HTTPUpgrade (`/vless-hup`, `/vmess-hup`, `/trojan-hup`) sudah otomatis aktif setelah install selesai — tidak perlu lagi menjalankan `refresh-hup.sh` secara manual.
+> Cukup satu command di atas. Fresh install sudah otomatis termasuk:
+> - Inbound HTTPUpgrade (`/vless-hup`, `/vmess-hup`, `/trojan-hup`)
+> - IP-limit untuk SSH (cron `*/1 * * * *` jalan otomatis)
+> - Menu option **14. Cek IP Limit** + **15. Set IP Limit**
+> - Prompt `Limit IP (1/2)` di `add-ssh` / `add-ssh-gege`
+> - CLI wrapper `sshman` / `vmessman` / `vlessman` / `trojanman`
 
 ``If it stops in the middle of the process``
 ```html
 screen -r fn
 ```
+---
+
+## 🛡️ IP Limit (SSH only)
+
+Limit jumlah device per akun **SSH/Dropbear** (1 atau 2 IP). Di-enforce dengan menghitung child process `sshd` / `sshd-session` / `sshd-auth` / `dropbear` yang dimiliki user — jadi akurat juga untuk koneksi via HTTP Custom / SSH WebSocket (semua loopback `127.0.0.1`, tapi tiap device = 1 child process). Cron jalan tiap 1 menit; kalau over-limit, semua sesi user tsb di-`kill -9`. Device reconnect → cuma N pertama (= limit) yang berhasil.
+
+**Tidak menyentuh iptables sama sekali** → tidak ada risiko block IP HP / admin secara permanen.
+
+**Catatan:** IP limit ini hanya berlaku untuk **SSH/Dropbear**. Xray (vmess/vless/trojan) **tidak** di-limit karena akan butuh `proxy_protocol` end-to-end di nginx → xray supaya real client IP bisa di-extract — tanpa itu, semua koneksi WS terlihat dari `127.0.0.1` dan iptables block bakal merusak proxy chain.
+
+File DB: `/usr/local/etc/xray/limit-ip.db` (format: `<user> <limit>`). Default global: `/usr/local/etc/xray/limit-ip` (default isinya `2`).
+
+Menu utama:
+- **14. Cek IP Limit** — tampilkan sesi aktif per user + status NoobzVPN
+- **15. Set IP Limit** — ubah limit per user / set semua / ubah default global
+
+Utility lain via shell:
+```bash
+cek-limit                 # tampilkan status (sama dengan menu 14)
+set-limit                 # ubah limit (sama dengan menu 15)
+/usr/local/bin/limit-ip   # paksa enforce sekarang (cron jalan otomatis tiap 1 menit)
+```
+
+---
+
+## 👤 Account Manager CLI
+
+Wrapper CLI buat manajemen akun dari shell (selain menu interaktif). Cocok untuk integrasi bot Telegram / API.
+
+**SSH (`sshman`) — dengan IP limit:**
+```bash
+sshman add <username> <password> [iplimit 1/2]    # default iplimit = 2
+sshman check <username>
+sshman del <username>
+sshman unlock <username>                          # reset faillock + pam_tally2
+```
+
+**Xray (`vmessman` / `vlessman` / `trojanman`) — tanpa IP limit:**
+```bash
+vmessman  add | check | renew | del  <username> [days]   # default 30 hari
+vlessman  add | check | renew | del  <username> [days]
+trojanman add | check | renew | del  <username> [days]
+```
+
 ---
 
 ## 🌐 Port Information
