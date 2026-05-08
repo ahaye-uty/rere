@@ -117,6 +117,7 @@ apt install lsb-release -y
 apt install bsdmainutils -y
 apt install iptables -y
 apt install iptables-persistent -y
+apt install conntrack -y
 apt install binutils -y
 apt install python -y
 apt install python2 -y
@@ -477,9 +478,12 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
-# IP Limiter (SSH only) - per-user limit (1 or 2 IP)
-# NOTE: hanya untuk SSH/Dropbear. Tidak menyentuh iptables sama
-# sekali (enforce via kill child sshd/dropbear). Xray tidak di-limit.
+# IP Limiter (SSH always-on, UDP-Custom opt-in) - per-user limit (1 or 2 IP)
+# NOTE SSH: hanya untuk SSH/Dropbear. Tidak menyentuh iptables sama
+#          sekali (enforce via kill child sshd/dropbear).
+# NOTE UDP: opt-in, iptables connlimit pada port UDP-custom saja (bukan
+#          443/80). Default OFF -- nyalakan via menu 'Set IP Limit'.
+# Xray (vmess/vless/trojan) tidak di-limit.
 mkdir -p /usr/local/etc/xray
 wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
 wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
@@ -490,8 +494,10 @@ wget -q -O /usr/local/sbin/vlessman  "${hosting}/vlessman"
 wget -q -O /usr/local/sbin/trojanman "${hosting}/trojanman"
 chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit /usr/local/bin/sshman
 chmod +x /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/trojanman
-[[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
-[[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
+[[ -f /usr/local/etc/xray/limit-ip ]]        || echo "2"     > /usr/local/etc/xray/limit-ip
+[[ -f /usr/local/etc/xray/limit-ip.db ]]     || touch          /usr/local/etc/xray/limit-ip.db
+[[ -f /usr/local/etc/xray/limit-udp-enabled ]] || echo "0"   > /usr/local/etc/xray/limit-udp-enabled
+[[ -f /usr/local/etc/xray/limit-udp-port ]]  || echo "36712" > /usr/local/etc/xray/limit-udp-port
 
 # Cron
 apt install cron -y
