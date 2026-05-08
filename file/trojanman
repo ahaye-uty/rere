@@ -89,7 +89,7 @@ exists_user() {
   local proto="$1"
   local user="$2"
   local marker
-  marker="$(get_marker "$proto"=)"
+  marker="$(get_marker "$proto")"
   grep -qE "^${marker}[[:space:]]+${user}[[:space:]]+" "$CONFIG"
 }
 
