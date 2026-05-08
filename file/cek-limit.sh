@@ -1,8 +1,16 @@
 #!/bin/bash
 # ========================================================
-# Cek IP Limit - Tampilkan status IP per user
+# Cek IP Limit - Tampilkan status sesi / IP per user
 # Menunjukkan user yang melebihi limit (bandel)
 # Supports per-user limit dari limit-ip.db
+#
+# SSH/Dropbear: dihitung per-SESI aktif (anak sshd/dropbear
+#   yang dimiliki user) — akurat utk HTTP Custom / SSH WS
+#   yang semua koneksi terlihat dari 127.0.0.1.
+# Xray: dihitung per-koneksi TCP (unique IP+port) dari access.log.
+#   Untuk klien WS via nginx, source IP selalu 127.0.0.1 tapi
+#   source-port berbeda per device, jadi counting connection
+#   = approximate counting device aktif.
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
@@ -31,6 +39,37 @@ get_user_limit() {
     echo "$DEFAULT_LIMIT"
 }
 
+# List PIDs sshd/dropbear yang dimiliki user (anak hasil fork
+# setelah auth sukses = jumlah sesi aktif).
+get_user_ssh_pids() {
+    local user="$1"
+    ps -u "$user" -o pid=,comm= 2>/dev/null \
+        | awk '$2 ~ /^(sshd|sshd-session|sshd-auth|dropbear)$/ {print $1}'
+}
+
+# Ambil peer IP (IP klien) dari koneksi TCP yang dipegang PID tsb.
+# Untuk SSH WS (HTTP Custom) ini akan return 127.0.0.1 karena
+# koneksi ke sshd berasal dari proxy.py loopback.
+get_peer_ip_for_pid() {
+    local pid="$1"
+    ss -tnpH 2>/dev/null \
+        | awk -v p="pid=$pid," '$0 ~ p {print $5; exit}' \
+        | sed -E 's/:[0-9]+$//; s/^\[//; s/\]$//'
+}
+
+# Ambil koneksi TCP aktif (IP+port) per user xray dari access.log.
+# Tiap unique (sourceIP, sourcePort) = 1 koneksi TCP ≈ 1 device aktif.
+get_user_xray_conns() {
+    local user="$1"
+    local access_log="$2"
+    grep -w "$user" "$access_log" 2>/dev/null \
+        | tail -n 2000 \
+        | awk '{print $3}' \
+        | sed 's/^tcp://; s/^udp://' \
+        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$' \
+        | sort -u
+}
+
 RED='\e[31m'
 GREEN='\e[32m'
 YELLOW='\e[33m'
@@ -41,62 +80,47 @@ BOLD='\e[1m'
 clear
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "           ${BOLD}CEK IP LIMIT PER USER${NC}"
-echo -e "           Default limit: ${CYAN}${DEFAULT_LIMIT} IP${NC} per user"
+echo -e "           Default limit: ${CYAN}${DEFAULT_LIMIT}${NC} per user"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ===== SSH =====
 echo ""
-echo -e " ${BOLD}═══ SSH / Dropbear ═══${NC}"
+echo -e " ${BOLD}═══ SSH / Dropbear (sesi aktif) ═══${NC}"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-AUTH_LOG="/var/log/auth.log"
-[[ -f "/var/log/secure" ]] && AUTH_LOG="/var/log/secure"
 
 ssh_bandel=0
 ssh_total=0
 
-if [[ -f "$AUTH_LOG" ]]; then
-    grep -i "Accepted password for\|Password auth succeeded" "$AUTH_LOG" > /tmp/.cek-limit-auth.tmp 2>/dev/null
+users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
 
-    users=$(awk -F: '$7=="/bin/false" {print $1}' /etc/passwd)
-    ssh_pids=$(ps aux 2>/dev/null | grep "\[priv\]" | grep -v grep | awk '{print $2}')
-    db_pids=$(ps aux 2>/dev/null | grep -i "[d]ropbear" | awk '{print $2}')
+for user in $users; do
+    user_limit=$(get_user_limit "$user")
+    pids=$(get_user_ssh_pids "$user")
+    [[ -z "$pids" ]] && continue
 
-    for user in $users; do
-        user_ips=""
-        user_limit=$(get_user_limit "$user")
+    session_count=$(echo "$pids" | grep -c .)
+    ssh_total=$((ssh_total + 1))
 
-        for pid in $ssh_pids; do
-            ip=$(grep "sshd\[$pid\]" /tmp/.cek-limit-auth.tmp 2>/dev/null | grep "Accepted password for $user " | awk '{print $11}' | tail -1)
-            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
-        done
+    if [[ "$session_count" -gt "$user_limit" ]]; then
+        ssh_bandel=$((ssh_bandel + 1))
+        echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} — ${RED}$session_count${NC}/${user_limit} sesi"
+    else
+        echo -e " ${GREEN}[OK]${NC}   $user — ${GREEN}$session_count${NC}/${user_limit} sesi"
+    fi
 
-        for pid in $db_pids; do
-            ip=$(grep "dropbear\[$pid\]" /tmp/.cek-limit-auth.tmp 2>/dev/null | grep -w "$user" | awk '{print $12}' | tail -1)
-            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
-        done
-
-        unique_ips=$(echo "$user_ips" | tr ' ' '\n' | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
-        ip_count=$(echo "$unique_ips" | grep -c .)
-
-        if [[ "$ip_count" -gt 0 ]]; then
-            ssh_total=$((ssh_total + 1))
-            if [[ "$ip_count" -gt "$user_limit" ]]; then
-                ssh_bandel=$((ssh_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} — ${RED}$ip_count${NC}/${user_limit} IP"
-                echo "$unique_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
-            else
-                echo -e " ${GREEN}[OK]${NC}   $user — ${GREEN}$ip_count${NC}/${user_limit} IP"
-                echo "$unique_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
-            fi
+    for pid in $pids; do
+        ip=$(get_peer_ip_for_pid "$pid")
+        if [[ -z "$ip" ]]; then
+            ip="(unknown)"
+            label=""
+        elif [[ "$ip" == "127.0.0.1" || "$ip" == "::1" ]]; then
+            label=" ${CYAN}(WS/loopback)${NC}"
+        else
+            label=""
         fi
+        echo -e "         └─ pid=$pid $ip$label"
     done
-    rm -f /tmp/.cek-limit-auth.tmp
-fi
+done
 
 if [[ "$ssh_total" -eq 0 ]]; then
     echo -e " ${CYAN}(tidak ada user SSH yang aktif)${NC}"
@@ -116,10 +140,10 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
 
     for user in $all_users; do
         user_limit=$(get_user_limit "$user")
-        user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
-        ip_count=$(echo "$user_ips" | grep -c .)
+        user_conns=$(get_user_xray_conns "$user" "$access_log")
+        conn_count=$(echo "$user_conns" | grep -c .)
 
-        if [[ "$ip_count" -gt 0 ]]; then
+        if [[ "$conn_count" -gt 0 ]]; then
             xray_total=$((xray_total + 1))
 
             # Detect protocol type
@@ -128,18 +152,21 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
             grep -q "^#& $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="vless"
             grep -q "^#! $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="trojan"
 
-            if [[ "$ip_count" -gt "$user_limit" ]]; then
+            if [[ "$conn_count" -gt "$user_limit" ]]; then
                 xray_bandel=$((xray_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$ip_count${NC}/${user_limit} IP"
-                echo "$user_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
+                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$conn_count${NC}/${user_limit} koneksi"
             else
-                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$ip_count${NC}/${user_limit} IP"
-                echo "$user_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
+                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$conn_count${NC}/${user_limit} koneksi"
             fi
+            echo "$user_conns" | while read -r conn; do
+                ip="${conn%:*}"
+                if [[ "$ip" == "127.0.0.1" || "$ip" == "::1" ]]; then
+                    label=" ${CYAN}(WS/loopback)${NC}"
+                else
+                    label=""
+                fi
+                echo -e "         └─ $conn$label"
+            done
         fi
     done
 fi
