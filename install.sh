@@ -477,11 +477,17 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
+# IP Limiter (SSH & Xray) - default 2 IP per user
+wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
+chmod +x /usr/local/bin/limit-ip
+echo "2" > /usr/local/etc/xray/limit-ip
+
 # Cron
 apt install cron -y
 echo -e "
 */15 * * * * root echo -n > /var/log/xray/access.log
 */15 * * * * root xp
+*/1 * * * * root /usr/local/bin/limit-ip
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 " >> /etc/crontab
 systemctl daemon-reload
