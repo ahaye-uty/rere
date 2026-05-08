@@ -1,10 +1,17 @@
 #!/bin/bash
 # ========================================================
 # IP Limiter for SSH & Xray
-# Enforce max simultaneous IP connections per user
-# Supports per-user limit (1 or 2 IP) from limit-ip.db
+# Enforce max simultaneous sessions/IP connections per user
+# Supports per-user limit (1 or 2) from limit-ip.db
 # Fallback to global default from limit-ip file
 # Runs via cron every 1 minute
+#
+# SSH/Dropbear: dihitung per-SESI aktif (anak sshd/dropbear
+#   yang dimiliki user), bukan unique IP. Lebih akurat utk
+#   koneksi via HTTP Custom / SSH WebSocket — semuanya berasal
+#   dari 127.0.0.1 (nginx -> proxy -> sshd/dropbear) sehingga
+#   counting unique IP selalu = 1 dan limit tidak akan kena.
+# Xray: tetap dihitung per-unique IP dari access.log.
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
@@ -44,56 +51,35 @@ if [[ -f "$LOG_FILE" ]] && [[ $(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt
     tail -n 200 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
 fi
 
-# ===== SSH / Dropbear Limiter =====
-# Uses auth.log to find IPs per active session (same method as cek-ssh)
-limit_ssh() {
-    local AUTH_LOG="/var/log/auth.log"
-    [[ -f "/var/log/secure" ]] && AUTH_LOG="/var/log/secure"
-    [[ ! -f "$AUTH_LOG" ]] && return
+# List PIDs sshd/dropbear/sshd-session/sshd-auth yang dimiliki user.
+# Setelah autentikasi sukses, sshd & dropbear fork child yang berjalan
+# sebagai user; jadi banyaknya PID = banyaknya sesi SSH aktif user tsb.
+get_user_ssh_pids() {
+    local user="$1"
+    ps -u "$user" -o pid=,comm= 2>/dev/null \
+        | awk '$2 ~ /^(sshd|sshd-session|sshd-auth|dropbear)$/ {print $1}'
+}
 
+# ===== SSH / Dropbear Limiter =====
+limit_ssh() {
     local users
-    users=$(awk -F: '$7=="/bin/false" {print $1}' /etc/passwd)
+    users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
     [[ -z "$users" ]] && return
 
-    # Cache auth.log entries for speed
-    grep -i "Accepted password for\|Password auth succeeded" "$AUTH_LOG" > /tmp/.limit-ip-auth.tmp 2>/dev/null
-
     for user in $users; do
-        local user_ips=""
-        local LIMIT
+        local LIMIT pids count
         LIMIT=$(get_user_limit "$user")
+        pids=$(get_user_ssh_pids "$user")
+        count=$(echo "$pids" | grep -c .)
 
-        # OpenSSH: get active privileged PIDs, look up user+IP from auth.log
-        local ssh_pids
-        ssh_pids=$(ps aux 2>/dev/null | grep "\[priv\]" | grep -v grep | awk '{print $2}')
-        for pid in $ssh_pids; do
-            local ip
-            ip=$(grep "sshd\[$pid\]" /tmp/.limit-ip-auth.tmp 2>/dev/null | grep "Accepted password for $user " | awk '{print $11}' | tail -1)
-            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
-        done
-
-        # Dropbear: get active PIDs, look up user+IP from auth.log
-        local db_pids
-        db_pids=$(ps aux 2>/dev/null | grep -i "[d]ropbear" | awk '{print $2}')
-        for pid in $db_pids; do
-            local ip
-            ip=$(grep "dropbear\[$pid\]" /tmp/.limit-ip-auth.tmp 2>/dev/null | grep -w "$user" | awk '{print $12}' | tail -1)
-            [[ -n "$ip" ]] && user_ips="$user_ips $ip"
-        done
-
-        # Count unique IPs
-        local unique_ips unique_count
-        unique_ips=$(echo "$user_ips" | tr ' ' '\n' | grep -oP '\d+\.\d+\.\d+\.\d+' | sort -u)
-        unique_count=$(echo "$unique_ips" | grep -c .)
-
-        if [[ "$unique_count" -gt "$LIMIT" ]]; then
-            log_msg "SSH LIMIT: user=$user ips=$unique_count/$LIMIT -> kill"
-            pkill -u "$user" sshd 2>/dev/null
-            pkill -u "$user" dropbear 2>/dev/null
+        if [[ "$count" -gt "$LIMIT" ]]; then
+            log_msg "SSH LIMIT: user=$user sessions=$count/$LIMIT -> kill"
+            # Kill semua sesi user supaya next-connect kembali dalam limit.
+            for pid in $pids; do
+                kill -9 "$pid" 2>/dev/null
+            done
         fi
     done
-
-    rm -f /tmp/.limit-ip-auth.tmp
 }
 
 # ===== Xray Limiter (iptables-based, no xray restart needed) =====
