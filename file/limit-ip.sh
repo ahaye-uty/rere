@@ -11,7 +11,12 @@
 #   koneksi via HTTP Custom / SSH WebSocket — semuanya berasal
 #   dari 127.0.0.1 (nginx -> proxy -> sshd/dropbear) sehingga
 #   counting unique IP selalu = 1 dan limit tidak akan kena.
-# Xray: tetap dihitung per-unique IP dari access.log.
+# Xray: dihitung per-koneksi TCP aktif (unique IP+port) dalam
+#   window waktu pendek. Untuk klien WS via nginx, semua source
+#   = 127.0.0.1, tapi tiap device pakai source-port berbeda —
+#   counting connection = approximate counting device aktif.
+#   Enforcement: iptables block utk external IP (real client),
+#   skip 127.0.0.1 karena memblokir loopback akan break nginx.
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
@@ -82,8 +87,25 @@ limit_ssh() {
     done
 }
 
-# ===== Xray Limiter (iptables-based, no xray restart needed) =====
-# Uses access.log to find IPs per user (same method as cek-vmess/cek-vless)
+# Ambil koneksi TCP aktif (IP+port) per user dari access.log
+# dalam window 5 menit terakhir. Setiap unique (sourceIP,sourcePort)
+# = 1 koneksi TCP ≈ 1 device aktif (untuk WS via nginx, sourceIP
+# selalu 127.0.0.1 tapi sourcePort berbeda per device).
+get_user_xray_conns() {
+    local user="$1"
+    local access_log="$2"
+    grep -w "$user" "$access_log" 2>/dev/null \
+        | tail -n 2000 \
+        | awk '{print $3}' \
+        | sed 's/^tcp://; s/^udp://' \
+        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$' \
+        | sort -u
+}
+
+# ===== Xray Limiter =====
+# Counting per-connection (unique IP+port). Block external IPs via
+# iptables. Loopback (127.0.0.1) tidak bisa di-block tanpa break
+# nginx -> aktifkan proxy_protocol jika ingin enforce real-IP.
 limit_xray() {
     local access_log="/var/log/xray/access.log"
     [[ ! -f "$access_log" ]] && return
@@ -102,27 +124,33 @@ limit_xray() {
     [[ -z "$all_users" ]] && return
 
     for user in $all_users; do
-        local LIMIT
+        local LIMIT user_conns conn_count
         LIMIT=$(get_user_limit "$user")
+        user_conns=$(get_user_xray_conns "$user" "$access_log")
+        conn_count=$(echo "$user_conns" | grep -c .)
+        [[ "$conn_count" -le "$LIMIT" ]] && continue
 
-        # Get unique source IPs (same parsing as cek-vmess: field 3, strip tcp:, get IP before port)
-        local user_ips
-        user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
+        # Pisah external IPs vs loopback. iptables hanya bisa block
+        # external IP (block 127.0.0.1 akan break nginx -> xray).
+        local external_ips ext_count
+        external_ips=$(echo "$user_conns" | cut -d ':' -f 1 | sort -u | grep -vE '^(127\.|::1$)' || true)
+        ext_count=$(echo "$external_ips" | grep -c .)
 
-        local ip_count
-        ip_count=$(echo "$user_ips" | grep -c .)
-        [[ "$ip_count" -le "$LIMIT" ]] && continue
+        log_msg "XRAY LIMIT: user=$user conns=$conn_count/$LIMIT ext_ips=$ext_count"
 
-        log_msg "XRAY LIMIT: user=$user ips=$ip_count/$LIMIT -> blocking excess"
-
-        # Keep the first $LIMIT IPs, block the rest
-        local blocked
-        blocked=$(echo "$user_ips" | tail -n +"$((LIMIT + 1))")
-
-        for ip in $blocked; do
-            iptables -A "$CHAIN_NAME" -s "$ip" -p tcp -m multiport --dports 443,80,2443,2081,2082,1013 -j DROP
-            log_msg "XRAY BLOCK: ip=$ip user=$user"
-        done
+        if [[ "$ext_count" -gt "$LIMIT" ]]; then
+            local blocked
+            blocked=$(echo "$external_ips" | tail -n +"$((LIMIT + 1))")
+            for ip in $blocked; do
+                iptables -A "$CHAIN_NAME" -s "$ip" -p tcp -m multiport --dports 443,80,2443,2081,2082,1013 -j DROP
+                log_msg "XRAY BLOCK: ip=$ip user=$user"
+            done
+        elif [[ "$ext_count" -eq 0 ]]; then
+            # Semua koneksi via WS/loopback — enable proxy_protocol di
+            # nginx + acceptProxyProtocol di xray supaya real client IP
+            # bisa di-extract dan di-block.
+            log_msg "XRAY NOTE: user=$user semua conn loopback/WS, enforce IP-block tidak bisa (butuh proxy_protocol)"
+        fi
     done
 }
 

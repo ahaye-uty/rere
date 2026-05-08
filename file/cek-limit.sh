@@ -7,7 +7,10 @@
 # SSH/Dropbear: dihitung per-SESI aktif (anak sshd/dropbear
 #   yang dimiliki user) — akurat utk HTTP Custom / SSH WS
 #   yang semua koneksi terlihat dari 127.0.0.1.
-# Xray: dihitung per-unique IP dari access.log.
+# Xray: dihitung per-koneksi TCP (unique IP+port) dari access.log.
+#   Untuk klien WS via nginx, source IP selalu 127.0.0.1 tapi
+#   source-port berbeda per device, jadi counting connection
+#   = approximate counting device aktif.
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
@@ -52,6 +55,19 @@ get_peer_ip_for_pid() {
     ss -tnpH 2>/dev/null \
         | awk -v p="pid=$pid," '$0 ~ p {print $5; exit}' \
         | sed -E 's/:[0-9]+$//; s/^\[//; s/\]$//'
+}
+
+# Ambil koneksi TCP aktif (IP+port) per user xray dari access.log.
+# Tiap unique (sourceIP, sourcePort) = 1 koneksi TCP ≈ 1 device aktif.
+get_user_xray_conns() {
+    local user="$1"
+    local access_log="$2"
+    grep -w "$user" "$access_log" 2>/dev/null \
+        | tail -n 2000 \
+        | awk '{print $3}' \
+        | sed 's/^tcp://; s/^udp://' \
+        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$' \
+        | sort -u
 }
 
 RED='\e[31m'
@@ -124,10 +140,10 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
 
     for user in $all_users; do
         user_limit=$(get_user_limit "$user")
-        user_ips=$(grep -w "$user" "$access_log" | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort -u | grep -oP '\d+\.\d+\.\d+\.\d+')
-        ip_count=$(echo "$user_ips" | grep -c .)
+        user_conns=$(get_user_xray_conns "$user" "$access_log")
+        conn_count=$(echo "$user_conns" | grep -c .)
 
-        if [[ "$ip_count" -gt 0 ]]; then
+        if [[ "$conn_count" -gt 0 ]]; then
             xray_total=$((xray_total + 1))
 
             # Detect protocol type
@@ -136,18 +152,21 @@ if [[ -f "$access_log" ]] && [[ -s "$access_log" ]]; then
             grep -q "^#& $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="vless"
             grep -q "^#! $user " /usr/local/etc/xray/config.json 2>/dev/null && proto="trojan"
 
-            if [[ "$ip_count" -gt "$user_limit" ]]; then
+            if [[ "$conn_count" -gt "$user_limit" ]]; then
                 xray_bandel=$((xray_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$ip_count${NC}/${user_limit} IP"
-                echo "$user_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
+                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$user${NC} (${proto}) — ${RED}$conn_count${NC}/${user_limit} koneksi"
             else
-                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$ip_count${NC}/${user_limit} IP"
-                echo "$user_ips" | while read -r ip; do
-                    echo -e "         └─ $ip"
-                done
+                echo -e " ${GREEN}[OK]${NC}   $user ($proto) — ${GREEN}$conn_count${NC}/${user_limit} koneksi"
             fi
+            echo "$user_conns" | while read -r conn; do
+                ip="${conn%:*}"
+                if [[ "$ip" == "127.0.0.1" || "$ip" == "::1" ]]; then
+                    label=" ${CYAN}(WS/loopback)${NC}"
+                else
+                    label=""
+                fi
+                echo -e "         └─ $conn$label"
+            done
         fi
     done
 fi
