@@ -477,25 +477,11 @@ systemctl start udp-custom &>/dev/null
 echo enable service udp-custom
 systemctl enable udp-custom &>/dev/null
 
-# IP Limiter (SSH & Xray) - per-user limit (1 or 2 IP)
-wget -q -O /usr/local/bin/limit-ip "${hosting}/limit-ip.sh"
-wget -q -O /usr/local/sbin/cek-limit "${hosting}/cek-limit.sh"
-wget -q -O /usr/local/sbin/set-limit "${hosting}/set-limit.sh"
-wget -q -O /usr/local/bin/sshman "${hosting}/sshman"
-wget -q -O /usr/local/sbin/vmessman "${hosting}/vmessman"
-wget -q -O /usr/local/sbin/vlessman "${hosting}/vlessman"
-wget -q -O /usr/local/sbin/trojanman "${hosting}/trojanman"
-chmod +x /usr/local/bin/limit-ip /usr/local/sbin/cek-limit /usr/local/sbin/set-limit
-chmod +x /usr/local/bin/sshman /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/trojanman
-echo "2" > /usr/local/etc/xray/limit-ip
-touch /usr/local/etc/xray/limit-ip.db
-
 # Cron
 apt install cron -y
 echo -e "
 */15 * * * * root echo -n > /var/log/xray/access.log
 */15 * * * * root xp
-*/1 * * * * root /usr/local/bin/limit-ip
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 " >> /etc/crontab
 systemctl daemon-reload
@@ -740,12 +726,6 @@ __rere_track "patch-menu-fail2ban" $?
 
 __rere_run_remote "${RERE_HOSTING}/patch-menu-misc.sh" /usr/local/sbin
 __rere_track "patch-menu-misc" $?
-
-__rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
-__rere_track "patch-menu-limit" $?
-
-__rere_run_remote "${RERE_HOSTING}/patch-add-limit.sh" /usr/local/sbin
-__rere_track "patch-add-limit" $?
 
 echo "v0.0" > /etc/current_version
 echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
