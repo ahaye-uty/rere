@@ -64,7 +64,7 @@ File DB: `/usr/local/etc/xray/limit-ip.db` (format: `<user> <limit>`). Default g
 
 Menu utama:
 - **14. Cek IP Limit** — tampilkan sesi aktif per user + status NoobzVPN
-- **15. Set IP Limit** — ubah limit per user / set semua / ubah default global / on-off UDP-Custom limit
+- **15. Set IP Limit** — ubah limit per user / set semua / ubah default global
 
 Utility lain via shell:
 ```bash
@@ -73,20 +73,7 @@ set-limit                 # ubah limit (sama dengan menu 15)
 /usr/local/bin/limit-ip   # paksa enforce sekarang (cron jalan otomatis tiap 1 menit)
 ```
 
-### UDP-Custom IP limit (opt-in, default OFF)
-
-`udp-custom` v1.4 (ePro) adalah single-process daemon yang **tidak fork per client** dan tidak expose per-user session info — jadi process-counting (cara SSH) tidak bisa diaplikasikan. Sebagai gantinya:
-
-- Gunakan iptables `connlimit` pada **port UDP tujuan udp-custom saja** (default `36712`). **Tidak menyentuh port 443/80** sama sekali → HTTP-Custom & SSH-WS tetap aman.
-- Semantic-nya **per source IP, bukan per user** (default 1 source IP max 2 concurrent UDP flow). Bukan ban IP — hanya quota; flow ke-N+1 dari source IP yang sama di-DROP, sisanya tetap jalan.
-- Default **OFF**. Aktifkan via menu **15. Set IP Limit → opsi 4**, atau:
-  ```bash
-  echo 1 > /usr/local/etc/xray/limit-udp-enabled
-  /usr/local/bin/limit-ip   # langsung apply, tidak perlu nunggu cron
-  ```
-- Limit value pakai global default (`/usr/local/etc/xray/limit-ip`). Ubah port udp-custom (kalau berbeda dari 36712) di `/usr/local/etc/xray/limit-udp-port`.
-- `cek-limit` menampilkan flow UDP per source IP saat fitur ini aktif (butuh package `conntrack`, di-install otomatis saat di-aktifkan dari menu).
-- Disable: pilih opsi 4 lagi di menu, atau `echo 0 > /usr/local/etc/xray/limit-udp-enabled && /usr/local/bin/limit-ip`. Chain `LIMIT-UDP-CUSTOM` otomatis di-cleanup.
+**UDP-Custom tidak di-limit.** `udp-custom` v1.4 itu single-process daemon yang tidak fork per client dan tidak expose per-user session info, jadi limit per-device tidak bisa di-enforce dengan reliable di network layer. Untuk akun yang butuh limit ketat, arahkan user pakai mode SSH/WS instead of UDP-Custom-only.
 
 ---
 

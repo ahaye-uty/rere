@@ -1,27 +1,22 @@
 #!/bin/bash
 # ========================================================
-# Cek IP Limit (SSH + UDP-Custom + NoobzVPN)
-# Tampilkan status sesi aktif per user SSH dan flow per source
-# IP untuk UDP-Custom. Yang over-limit ditandai [OVER].
+# Cek IP Limit (SSH-only display + NoobzVPN)
+# Tampilkan status sesi aktif per user SSH.
+# User yang melebihi limit ditandai [OVER].
 #
-# SSH counting: jumlah child sshd/dropbear yang dimiliki user.
-# Akurat untuk koneksi via HTTP Custom / SSH WebSocket
-# (semua loopback 127.0.0.1, tapi tiap device = 1 child).
+# Counting per-SESSION: jumlah child sshd/dropbear yang dimiliki
+# user. Akurat untuk koneksi via HTTP Custom / SSH WebSocket
+# (semua koneksi loopback 127.0.0.1, tapi tiap device = 1 child).
 #
-# UDP-Custom: hanya ditampilkan kalau IP limit UDP di-aktifkan
-# (file /usr/local/etc/xray/limit-udp-enabled berisi '1').
-# Counting per source IP via conntrack flow ke port udp-custom.
-# Semantic: max N concurrent UDP flow per source IP.
-#
-# Xray (vmess/vless/trojan) tidak di-display di sini karena
-# IP limit-nya sengaja dilepas (butuh proxy_protocol untuk akurat).
+# Xray (vmess/vless/trojan) dan UDP-Custom tidak di-display di sini
+# karena IP limit-nya sengaja dilepas (tidak bisa enforce aman tanpa
+# proxy_protocol untuk Xray; udp-custom architecture tidak compatible
+# dengan per-device limiting di network layer).
 # ========================================================
 
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
 DB_FILE="/usr/local/etc/xray/limit-ip.db"
 LOG_FILE="/var/log/limit-ip.log"
-UDP_ENABLE_FILE="/usr/local/etc/xray/limit-udp-enabled"
-UDP_PORT_FILE="/usr/local/etc/xray/limit-udp-port"
 
 if [[ -f "$LIMIT_FILE" ]]; then
     DEFAULT_LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
@@ -29,17 +24,6 @@ else
     DEFAULT_LIMIT=2
 fi
 [[ ! "$DEFAULT_LIMIT" =~ ^[0-9]+$ ]] && DEFAULT_LIMIT=2
-
-if [[ -f "$UDP_PORT_FILE" ]]; then
-    UDP_PORT=$(cat "$UDP_PORT_FILE" | tr -d '[:space:]')
-fi
-[[ ! "$UDP_PORT" =~ ^[0-9]+$ ]] && UDP_PORT=36712
-
-UDP_ENABLED=0
-if [[ -f "$UDP_ENABLE_FILE" ]] \
-    && [[ "$(tr -d '[:space:]' < "$UDP_ENABLE_FILE")" == "1" ]]; then
-    UDP_ENABLED=1
-fi
 
 get_user_limit() {
     local username="$1"
@@ -76,13 +60,8 @@ BOLD='\e[1m'
 
 clear
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "           ${BOLD}CEK IP LIMIT${NC}"
-echo -e "           Default limit: ${CYAN}${DEFAULT_LIMIT}${NC} per user/IP"
-if [[ "$UDP_ENABLED" -eq 1 ]]; then
-    echo -e "           UDP-Custom limit: ${GREEN}ON${NC} (port ${CYAN}${UDP_PORT}${NC})"
-else
-    echo -e "           UDP-Custom limit: ${YELLOW}OFF${NC}"
-fi
+echo -e "           ${BOLD}CEK IP LIMIT (SSH only)${NC}"
+echo -e "           Default limit: ${CYAN}${DEFAULT_LIMIT}${NC} per user"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 echo ""
@@ -125,54 +104,6 @@ done
 
 if [[ "$ssh_total" -eq 0 ]]; then
     echo -e " ${CYAN}(tidak ada user SSH yang aktif)${NC}"
-fi
-
-echo ""
-echo -e " ${BOLD}═══ UDP-Custom (per source IP) ═══${NC}"
-echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-if [[ "$UDP_ENABLED" -ne 1 ]]; then
-    echo -e " ${YELLOW}(IP limit UDP-Custom tidak aktif)${NC}"
-    echo -e " ${CYAN}Aktifkan via menu \"Set IP Limit\" -> opsi 4${NC}"
-elif ! command -v conntrack >/dev/null 2>&1; then
-    echo -e " ${YELLOW}(conntrack belum terpasang -- jalankan: apt install conntrack)${NC}"
-else
-    udp_total=0
-    udp_bandel=0
-    udp_list=$(
-        conntrack -L -p udp --dport "$UDP_PORT" 2>/dev/null \
-            | awk '{
-                src=""
-                for (i=1; i<=NF; i++) {
-                    if ($i ~ /^src=/) { src=substr($i,5); break }
-                }
-                if (src != "") print src
-            }' \
-            | sort \
-            | uniq -c \
-            | sort -rn
-    )
-
-    if [[ -z "$udp_list" ]]; then
-        echo -e " ${CYAN}(tidak ada flow UDP-Custom aktif)${NC}"
-    else
-        while read -r line; do
-            count=$(echo "$line" | awk '{print $1}')
-            ip=$(echo "$line" | awk '{print $2}')
-            [[ -z "$count" || -z "$ip" ]] && continue
-            udp_total=$((udp_total + 1))
-            if [[ "$count" -gt "$DEFAULT_LIMIT" ]]; then
-                udp_bandel=$((udp_bandel + 1))
-                echo -e " ${RED}${BOLD}[OVER]${NC} ${YELLOW}$ip${NC} — ${RED}$count${NC}/${DEFAULT_LIMIT} flow"
-            else
-                echo -e " ${GREEN}[OK]${NC}   $ip — ${GREEN}$count${NC}/${DEFAULT_LIMIT} flow"
-            fi
-        done <<< "$udp_list"
-
-        if [[ "$udp_bandel" -gt 0 ]]; then
-            echo -e " ${RED}${BOLD}$udp_bandel IP melebihi limit -- excess flow di-DROP iptables${NC}"
-        fi
-    fi
 fi
 
 echo ""
