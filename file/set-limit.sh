@@ -7,7 +7,6 @@
 
 DB_FILE="/usr/local/etc/xray/limit-ip.db"
 LIMIT_FILE="/usr/local/etc/xray/limit-ip"
-UDP_ENABLE_FILE="/usr/local/etc/xray/limit-udp-enabled"
 
 if [[ -f "$LIMIT_FILE" ]]; then
     DEFAULT_LIMIT=$(cat "$LIMIT_FILE" | tr -d '[:space:]')
@@ -15,12 +14,6 @@ else
     DEFAULT_LIMIT=2
 fi
 [[ ! "$DEFAULT_LIMIT" =~ ^[0-9]+$ ]] && DEFAULT_LIMIT=2
-
-UDP_ENABLED=0
-if [[ -f "$UDP_ENABLE_FILE" ]] \
-    && [[ "$(tr -d '[:space:]' < "$UDP_ENABLE_FILE")" == "1" ]]; then
-    UDP_ENABLED=1
-fi
 
 touch "$DB_FILE" 2>/dev/null || true
 
@@ -69,22 +62,10 @@ fi
 
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-if [[ "$UDP_ENABLED" -eq 1 ]]; then
-    echo -e " UDP-Custom limit: ${GREEN}ON${NC} (max ${CYAN}${DEFAULT_LIMIT}${NC} flow / source IP)"
-else
-    echo -e " UDP-Custom limit: ${YELLOW}OFF${NC}"
-fi
-echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
 echo -e " ${BOLD}Pilihan:${NC}"
-echo -e " 1. Ubah limit 1 user (SSH)"
+echo -e " 1. Ubah limit 1 user"
 echo -e " 2. Set semua SSH ke limit tertentu"
 echo -e " 3. Ubah default global"
-if [[ "$UDP_ENABLED" -eq 1 ]]; then
-    echo -e " 4. UDP-Custom limit: ${GREEN}ON${NC}  -> matikan"
-else
-    echo -e " 4. UDP-Custom limit: ${YELLOW}OFF${NC} -> nyalakan"
-fi
 echo -e " 0. Kembali"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 read -p "Pilih: " pilih
@@ -144,37 +125,6 @@ case $pilih in
     echo "$new_default" > "$LIMIT_FILE"
     echo -e "${GREEN}Berhasil!${NC} Default global → ${CYAN}$new_default IP${NC}"
     echo -e "(User yang sudah di-set manual tidak terpengaruh)"
-    sleep 3
-    exec "$0"
-    ;;
-4)
-    echo -e "${BOLD}UDP-Custom limit${NC}"
-    echo -e "  Per-source-IP concurrent flow limit pada port UDP-custom (default 36712)."
-    echo -e "  Bukan ban IP -- hanya quota: max ${CYAN}${DEFAULT_LIMIT}${NC} flow simultan/IP."
-    echo -e "  TIDAK menyentuh port 443/80 (HTTP-custom & SSH-WS aman)."
-    echo -e "  Semantic per-IP, bukan per-user (udp-custom v1.4 tidak expose"
-    echo -e "  per-user session info, jadi enforce hanya bisa di network layer)."
-    echo ""
-    if [[ "$UDP_ENABLED" -eq 1 ]]; then
-        read -p "UDP-Custom limit AKTIF. Matikan? (y/n): " yn
-        if [[ "$yn" =~ ^[yY]$ ]]; then
-            echo "0" > "$UDP_ENABLE_FILE"
-            /usr/local/bin/limit-ip >/dev/null 2>&1
-            echo -e "${GREEN}UDP-Custom limit dimatikan.${NC} Chain LIMIT-UDP-CUSTOM dihapus."
-        fi
-    else
-        read -p "UDP-Custom limit MATI. Aktifkan? (y/n): " yn
-        if [[ "$yn" =~ ^[yY]$ ]]; then
-            echo "1" > "$UDP_ENABLE_FILE"
-            if ! command -v conntrack >/dev/null 2>&1; then
-                echo -e "${YELLOW}Install conntrack tools (untuk cek-limit)...${NC}"
-                apt-get install -y conntrack >/dev/null 2>&1 || true
-            fi
-            /usr/local/bin/limit-ip >/dev/null 2>&1
-            echo -e "${GREEN}UDP-Custom limit aktif.${NC} Max ${CYAN}${DEFAULT_LIMIT}${NC} flow/IP pada port UDP-custom."
-            echo -e "${CYAN}Cek dengan: cek-limit${NC}"
-        fi
-    fi
     sleep 3
     exec "$0"
     ;;
