@@ -6,11 +6,11 @@
 # Dijalankan via cron tiap 1 menit.
 #
 # Cara enforcement:
-#   Hitung sesi SSH authenticated per user lewat cmdline match
-#   "sshd: USER [priv]" (sama dengan yang dipakai built-in menu
-#   "Cek SSH Login"). Dropbear di-counted via user-owned dropbear
-#   process. Kalau lebih dari limit -> kill -9 PID-PID tersebut;
-#   user tinggal reconnect dan sesi balik dalam batas limit.
+#   Hitung proses sshd/sshd-session/sshd-auth/dropbear yang dimiliki
+#   user (= jumlah sesi SSH aktif post-auth). Kalau lebih dari limit
+#   -> kill -9 semua proses tsb. User tinggal reconnect, sesi balik
+#   dalam batas limit. Daemon user `sshd` (UID 111) di-skip lewat
+#   filter UID >= 1000 supaya child preauth-nya gak ke-pick.
 #
 # Tidak menggunakan iptables sama sekali -> tidak ada risiko
 # block IP HP user / admin sendiri secara permanen.
@@ -55,25 +55,19 @@ fi
 get_user_ssh_pids() {
     # Detect authenticated SSH sessions for a user.
     #
-    # OpenSSH: match the privsep parent process "sshd: USER [priv]".
-    # Created post-authentication, one per session, owned by root (NOT
-    # by the daemon user `sshd` -- so this never picks up preauth
-    # children). Pendekatan ini sama dengan yang dipakai built-in menu
-    # opsi 3 ("Cek SSH Login") -- grep "[priv]" di ps.
+    # Pendekatan: hitung proses sshd / sshd-session / sshd-auth /
+    # dropbear yang DIMILIKI user (post-auth, OpenSSH privsep
+    # unprivileged side + dropbear post-setuid). Ini lebih permissive
+    # daripada match cmdline "sshd: USER [priv]" -- match cmdline tadi
+    # ternyata gak reliable di beberapa env (proctitle bisa beda
+    # format atau gak ter-update kalau auth flow lewat WS proxy).
     #
-    # Dropbear: counted via user-owned dropbear processes (post-setuid,
-    # before shell exec). Dropbear gak punya daemon user terpisah
-    # sehingga gak ada risiko mis-detection seperti sshd.
+    # Risiko mis-detection terhadap daemon user `sshd` (UID 111) yang
+    # juga bisa muncul di sini, di-mitigate di limit_ssh() lewat filter
+    # UID >= 1000 -- jadi loop ini gak pernah iterate atas user `sshd`.
     local user="$1"
-    ps -eo pid=,args= 2>/dev/null | awk -v u="$user" '
-        {
-            pid=$1
-            $1=""
-            sub(/^[ \t]+/, "")
-            if ($0 == "sshd: " u " [priv]") print pid
-        }
-    '
-    pgrep -u "$user" -x dropbear 2>/dev/null
+    ps -u "$user" -o pid=,comm= 2>/dev/null \
+        | awk '$2 ~ /^(sshd.*|dropbear.*)$/ {print $1}'
 }
 
 limit_ssh() {

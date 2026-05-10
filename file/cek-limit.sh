@@ -4,12 +4,12 @@
 # Tampilkan status sesi aktif per user SSH.
 # User yang melebihi limit ditandai [OVER].
 #
-# Counting per-SESSION: match cmdline "sshd: USER [priv]" (one per
-# authenticated OpenSSH session) + user-owned dropbear processes.
-# Sama dengan logic yang dipakai built-in menu "Cek SSH Login",
-# jadi angkanya cocok antar tampilan. Akurat juga untuk koneksi
-# via HTTP Custom / SSH WebSocket (loopback 127.0.0.1, tapi tiap
-# device tetap dapet privsep parent sendiri).
+# Counting per-SESSION: jumlah proses sshd / sshd-session / sshd-auth
+# / dropbear yang dimiliki user (= post-auth privsep unprivileged
+# side + dropbear post-setuid). Akurat untuk koneksi via HTTP Custom
+# / SSH WebSocket (loopback 127.0.0.1, tapi tiap device tetap dapet
+# sshd child sendiri). Daemon user `sshd` di-skip via filter UID
+# >= 1000.
 #
 # Xray (vmess/vless/trojan) dan UDP-Custom tidak di-display di sini
 # karena IP limit-nya sengaja dilepas (tidak bisa enforce aman tanpa
@@ -43,20 +43,15 @@ get_user_limit() {
 
 get_user_ssh_pids() {
     # Detect authenticated SSH sessions for a user.
-    # Match cmdline "sshd: USER [priv]" (post-auth privsep parent) +
-    # user-owned dropbear processes. Selaras dengan built-in menu
-    # opsi 3 "Cek SSH Login" yang grep "[priv]" di ps -- jadi count
-    # di sini cocok dengan yang muncul di sana.
+    # Hitung proses sshd / sshd-session / sshd-auth / dropbear yang
+    # dimiliki user. Lebih permissive daripada cmdline match
+    # "sshd: USER [priv]" -- match cmdline ternyata gak reliable di
+    # semua env (proctitle bisa beda format atau gak ter-update saat
+    # auth lewat WS proxy). Filter UID >= 1000 di bawah ngejaga supaya
+    # daemon `sshd` gak nyasar di loop.
     local user="$1"
-    ps -eo pid=,args= 2>/dev/null | awk -v u="$user" '
-        {
-            pid=$1
-            $1=""
-            sub(/^[ \t]+/, "")
-            if ($0 == "sshd: " u " [priv]") print pid
-        }
-    '
-    pgrep -u "$user" -x dropbear 2>/dev/null
+    ps -u "$user" -o pid=,comm= 2>/dev/null \
+        | awk '$2 ~ /^(sshd.*|dropbear.*)$/ {print $1}'
 }
 
 get_peer_ip_for_pid() {
