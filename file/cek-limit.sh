@@ -12,7 +12,10 @@
 #      (sshd: "Accepted password/publickey for USER ...";
 #       dropbear: "... auth succeeded for 'USER' ...").
 #   3. Group by USER buat hitung sesi.
-# Jadi angka di sini SAMA persis sama menu opsi 3.
+#
+# Yang di-display cuma VPN account (shell /bin/false atau
+# /usr/sbin/nologin + UID >= 1000). User admin VPS yang punya
+# interactive shell di-skip supaya output bersih dari noise.
 #
 # Xray (vmess/vless/trojan) dan UDP-Custom tidak di-display di sini
 # karena IP limit-nya sengaja dilepas (tidak bisa enforce aman tanpa
@@ -50,6 +53,20 @@ get_auth_log() {
     elif [[ -f /var/log/secure ]]; then
         echo /var/log/secure
     fi
+}
+
+# True kalau user adalah VPN account: UID >= 1000 + shell nologin/
+# false. User admin VPS dengan shell /bin/bash dll skip.
+is_vpn_user() {
+    local user="$1"
+    local uid shell
+    uid=$(id -u "$user" 2>/dev/null)
+    [[ -z "$uid" || "$uid" -lt 1000 ]] && return 1
+    shell=$(getent passwd "$user" 2>/dev/null | awk -F: '{print $7}')
+    case "$shell" in
+        /bin/false|/usr/sbin/nologin|/sbin/nologin) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # Output: baris "PID USERNAME" buat tiap sesi SSH/Dropbear aktif.
@@ -122,10 +139,8 @@ sessions=$(build_session_map)
 users=$(echo "$sessions" | awk 'NF==2 {print $2}' | sort -u)
 
 for user in $users; do
-    # Skip daemon/system users (root, sshd UID 111) -- safety.
-    uid=$(id -u "$user" 2>/dev/null)
-    [[ -z "$uid" ]] && continue
-    [[ "$uid" -lt 1000 ]] && continue
+    # Skip non-VPN users (admin VPS dengan /bin/bash, daemon, root, dll).
+    is_vpn_user "$user" || continue
 
     user_limit=$(get_user_limit "$user")
     pids=$(echo "$sessions" | awk -v u="$user" '$2 == u {print $1}')

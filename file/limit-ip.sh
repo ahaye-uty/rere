@@ -16,9 +16,13 @@
 # Cara enforcement:
 #   Kalau jumlah PID untuk satu user > limit, kill -9 PID2 tsb.
 #   User tinggal reconnect, sesi balik dalam batas limit. Tidak
-#   nyentuh iptables. Daemon user `sshd` (UID 111) / `root` di-
-#   skip di stage kill via cek UID >= 1000 supaya gak ngebanned
-#   diri sendiri / preauth child.
+#   nyentuh iptables.
+#
+# User yang di-limit cuma VPN account (shell /bin/false atau
+# /usr/sbin/nologin + UID >= 1000). User admin VPS dengan shell
+# interactive (/bin/bash dll) di-skip supaya gak ngebanned diri
+# sendiri. Daemon user `sshd` (UID 111) juga ke-skip karena UID
+# filter.
 #
 # Xray (vmess/vless/trojan) dan UDP-Custom tidak di-limit di sini.
 # ========================================================
@@ -64,6 +68,22 @@ get_auth_log() {
     elif [[ -f /var/log/secure ]]; then
         echo /var/log/secure
     fi
+}
+
+# True kalau user adalah VPN account: UID >= 1000 + shell nologin/
+# false (= account yang dibuat lewat sshman/add-ssh). User admin
+# VPS dengan shell /bin/bash dll bakal return false -- gak masuk
+# loop enforcement.
+is_vpn_user() {
+    local user="$1"
+    local uid shell
+    uid=$(id -u "$user" 2>/dev/null)
+    [[ -z "$uid" || "$uid" -lt 1000 ]] && return 1
+    shell=$(getent passwd "$user" 2>/dev/null | awk -F: '{print $7}')
+    case "$shell" in
+        /bin/false|/usr/sbin/nologin|/sbin/nologin) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # Output: baris "PID USERNAME" buat tiap sesi SSH/Dropbear yang
@@ -117,12 +137,8 @@ limit_ssh() {
     [[ -z "$users" ]] && return
 
     for user in $users; do
-        # Safety: skip system / daemon users (root, sshd UID 111, dll)
-        # supaya gak kill diri sendiri / preauth child.
-        local uid
-        uid=$(id -u "$user" 2>/dev/null)
-        [[ -z "$uid" ]] && continue
-        [[ "$uid" -lt 1000 ]] && continue
+        # Skip non-VPN users (admin VPS dengan /bin/bash, daemon, root, dll)
+        is_vpn_user "$user" || continue
 
         local LIMIT pids count pid
         LIMIT=$(get_user_limit "$user")
