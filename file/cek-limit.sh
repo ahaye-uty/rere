@@ -4,12 +4,15 @@
 # Tampilkan status sesi aktif per user SSH.
 # User yang melebihi limit ditandai [OVER].
 #
-# Counting per-SESSION: jumlah proses sshd / sshd-session / sshd-auth
-# / dropbear yang dimiliki user (= post-auth privsep unprivileged
-# side + dropbear post-setuid). Akurat untuk koneksi via HTTP Custom
-# / SSH WebSocket (loopback 127.0.0.1, tapi tiap device tetap dapet
-# sshd child sendiri). Daemon user `sshd` di-skip via filter UID
-# >= 1000.
+# Counting per-SESSION (sama logic dgn menu built-in opsi 3 "Cek
+# SSH Login"):
+#   1. Ambil PID dengan tag [priv] di cmdline (privsep parent
+#      sshd, one per authenticated session) + PID dropbear aktif.
+#   2. Cross-reference tiap PID ke auth.log untuk dapet username
+#      (sshd: "Accepted password/publickey for USER ...";
+#       dropbear: "... auth succeeded for 'USER' ...").
+#   3. Group by USER buat hitung sesi.
+# Jadi angka di sini SAMA persis sama menu opsi 3.
 #
 # Xray (vmess/vless/trojan) dan UDP-Custom tidak di-display di sini
 # karena IP limit-nya sengaja dilepas (tidak bisa enforce aman tanpa
@@ -41,17 +44,51 @@ get_user_limit() {
     echo "$DEFAULT_LIMIT"
 }
 
-get_user_ssh_pids() {
-    # Detect authenticated SSH sessions for a user.
-    # Hitung proses sshd / sshd-session / sshd-auth / dropbear yang
-    # dimiliki user. Lebih permissive daripada cmdline match
-    # "sshd: USER [priv]" -- match cmdline ternyata gak reliable di
-    # semua env (proctitle bisa beda format atau gak ter-update saat
-    # auth lewat WS proxy). Filter UID >= 1000 di bawah ngejaga supaya
-    # daemon `sshd` gak nyasar di loop.
-    local user="$1"
-    ps -u "$user" -o pid=,comm= 2>/dev/null \
-        | awk '$2 ~ /^(sshd.*|dropbear.*)$/ {print $1}'
+get_auth_log() {
+    if [[ -f /var/log/auth.log ]]; then
+        echo /var/log/auth.log
+    elif [[ -f /var/log/secure ]]; then
+        echo /var/log/secure
+    fi
+}
+
+# Output: baris "PID USERNAME" buat tiap sesi SSH/Dropbear aktif.
+# Logic sama persis dgn built-in cek-ssh: PID [priv]/dropbear dari
+# ps + auth.log lookup.
+build_session_map() {
+    local logfile
+    logfile=$(get_auth_log)
+    [[ -z "$logfile" ]] && return
+
+    # === OpenSSH ===
+    local sshd_pids
+    sshd_pids=$(ps -eo pid=,args= 2>/dev/null | awk '/\[priv\]$/ {print $1}')
+    if [[ -n "$sshd_pids" ]]; then
+        local sshd_log
+        sshd_log=$(grep -E "sshd\[[0-9]+\]:[[:space:]]+Accepted (password|publickey|keyboard-interactive) for " "$logfile" 2>/dev/null \
+                   | sed -E 's/.*sshd\[([0-9]+)\]:[[:space:]]+Accepted [^ ]+ for ([^ ]+).*/\1 \2/' \
+                   | awk 'NF==2 {map[$1]=$2} END {for (p in map) print p, map[p]}')
+        local pid user
+        for pid in $sshd_pids; do
+            user=$(echo "$sshd_log" | awk -v p="$pid" '$1 == p {print $2; exit}')
+            [[ -n "$user" ]] && echo "$pid $user"
+        done
+    fi
+
+    # === Dropbear ===
+    local dpids
+    dpids=$(pgrep -x dropbear 2>/dev/null)
+    if [[ -n "$dpids" ]]; then
+        local dropbear_log
+        dropbear_log=$(grep -E "dropbear\[[0-9]+\]:.*(Password|Pubkey) auth succeeded for " "$logfile" 2>/dev/null \
+                       | sed -E "s/.*dropbear\[([0-9]+)\]:.*succeeded for '([^']+)'.*/\1 \2/" \
+                       | awk 'NF==2 {map[$1]=$2} END {for (p in map) print p, map[p]}')
+        local pid user
+        for pid in $dpids; do
+            user=$(echo "$dropbear_log" | awk -v p="$pid" '$1 == p {print $2; exit}')
+            [[ -n "$user" ]] && echo "$pid $user"
+        done
+    fi
 }
 
 get_peer_ip_for_pid() {
@@ -81,13 +118,17 @@ echo -e "━━━━━━━━━━━━━━━━━━━━━━━�
 ssh_bandel=0
 ssh_total=0
 
-# Hanya user-account beneran (UID >= 1000), bukan daemon
-# system seperti `sshd` yang juga punya shell /usr/sbin/nologin.
-users=$(awk -F: '($7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin") && $3>=1000 {print $1}' /etc/passwd)
+sessions=$(build_session_map)
+users=$(echo "$sessions" | awk 'NF==2 {print $2}' | sort -u)
 
 for user in $users; do
+    # Skip daemon/system users (root, sshd UID 111) -- safety.
+    uid=$(id -u "$user" 2>/dev/null)
+    [[ -z "$uid" ]] && continue
+    [[ "$uid" -lt 1000 ]] && continue
+
     user_limit=$(get_user_limit "$user")
-    pids=$(get_user_ssh_pids "$user")
+    pids=$(echo "$sessions" | awk -v u="$user" '$2 == u {print $1}')
     [[ -z "$pids" ]] && continue
 
     session_count=$(echo "$pids" | grep -c .)
