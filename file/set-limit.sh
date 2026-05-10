@@ -46,7 +46,9 @@ echo -e "━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo -e " ${BOLD}═══ Akun SSH ═══${NC}"
 echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ssh_users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
+# Hanya user-account beneran (UID >= 1000), bukan daemon
+# system seperti `sshd` yang juga punya shell /usr/sbin/nologin.
+ssh_users=$(awk -F: '($7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin") && $3>=1000 {print $1}' /etc/passwd)
 if [[ -n "$ssh_users" ]]; then
     for u in $ssh_users; do
         lim=$(get_user_limit "$u")

@@ -71,7 +71,9 @@ echo -e "━━━━━━━━━━━━━━━━━━━━━━━�
 ssh_bandel=0
 ssh_total=0
 
-users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
+# Hanya user-account beneran (UID >= 1000), bukan daemon
+# system seperti `sshd` yang juga punya shell /usr/sbin/nologin.
+users=$(awk -F: '($7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin") && $3>=1000 {print $1}' /etc/passwd)
 
 for user in $users; do
     user_limit=$(get_user_limit "$user")

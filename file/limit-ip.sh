@@ -59,7 +59,12 @@ get_user_ssh_pids() {
 
 limit_ssh() {
     local users
-    users=$(awk -F: '$7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin" {print $1}' /etc/passwd)
+    # Hanya ambil user-account beneran (UID >= 1000), bukan daemon
+    # system seperti `sshd` (UID 111) yang juga punya shell
+    # /usr/sbin/nologin. Tanpa filter UID, child sshd preauth
+    # process bakal di-counted sebagai "sesi sshd" dan ke-kill
+    # tiap menit, bikin login user legit gagal authenticate.
+    users=$(awk -F: '($7=="/bin/false" || $7=="/usr/sbin/nologin" || $7=="/sbin/nologin") && $3>=1000 {print $1}' /etc/passwd)
     [[ -z "$users" ]] && return
 
     for user in $users; do
