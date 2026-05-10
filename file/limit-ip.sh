@@ -6,10 +6,11 @@
 # Dijalankan via cron tiap 1 menit.
 #
 # Cara enforcement:
-#   Hitung child sshd/sshd-session/sshd-auth/dropbear yang
-#   dimiliki user (= jumlah sesi SSH aktif). Kalau lebih dari
-#   limit -> kill -9 semua sesi user tsb. User tinggal reconnect
-#   dan sesi balik dalam batas limit.
+#   Hitung sesi SSH authenticated per user lewat cmdline match
+#   "sshd: USER [priv]" (sama dengan yang dipakai built-in menu
+#   "Cek SSH Login"). Dropbear di-counted via user-owned dropbear
+#   process. Kalau lebih dari limit -> kill -9 PID-PID tersebut;
+#   user tinggal reconnect dan sesi balik dalam batas limit.
 #
 # Tidak menggunakan iptables sama sekali -> tidak ada risiko
 # block IP HP user / admin sendiri secara permanen.
@@ -52,9 +53,27 @@ if [[ -f "$LOG_FILE" ]] && [[ $(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt
 fi
 
 get_user_ssh_pids() {
+    # Detect authenticated SSH sessions for a user.
+    #
+    # OpenSSH: match the privsep parent process "sshd: USER [priv]".
+    # Created post-authentication, one per session, owned by root (NOT
+    # by the daemon user `sshd` -- so this never picks up preauth
+    # children). Pendekatan ini sama dengan yang dipakai built-in menu
+    # opsi 3 ("Cek SSH Login") -- grep "[priv]" di ps.
+    #
+    # Dropbear: counted via user-owned dropbear processes (post-setuid,
+    # before shell exec). Dropbear gak punya daemon user terpisah
+    # sehingga gak ada risiko mis-detection seperti sshd.
     local user="$1"
-    ps -u "$user" -o pid=,comm= 2>/dev/null \
-        | awk '$2 ~ /^(sshd|sshd-session|sshd-auth|dropbear)$/ {print $1}'
+    ps -eo pid=,args= 2>/dev/null | awk -v u="$user" '
+        {
+            pid=$1
+            $1=""
+            sub(/^[ \t]+/, "")
+            if ($0 == "sshd: " u " [priv]") print pid
+        }
+    '
+    pgrep -u "$user" -x dropbear 2>/dev/null
 }
 
 limit_ssh() {
