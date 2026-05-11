@@ -536,13 +536,12 @@ done < <(grep -oE '"email"[[:space:]]*:[[:space:]]*"[^"]+"' /usr/local/etc/xray/
            | sed -E 's/.*"([^"]+)"$/\1/' \
            | sort -u)
 
-# Tambah submenu "Cek Xray Quota" (16) + "Set Xray Quota" (17) ke main menu.
-wget -q -O /tmp/patch-menu-quota.sh "${hosting}/patch-menu-quota.sh" \
-    && bash /tmp/patch-menu-quota.sh /usr/local/sbin \
-    || echo "[install] WARNING: gagal apply patch-menu-quota.sh (skip)"
-rm -f /tmp/patch-menu-quota.sh
-
 # SSH bandwidth quota tracker + auto-block (per-user monthly quota).
+# Catatan: patch-menu-quota.sh (entry 16/17 Xray) sengaja TIDAK dipanggil di
+# sini — dia di-defer ke safety-net section di bawah (lewat __rere_run_remote
+# + tracked summary) supaya ke-detect kalau gagal. Sebelumnya pemanggilan
+# pakai pola `wget && bash || echo WARNING` di sini fail silently kalau wget
+# error transient, akibatnya 16/17 hilang dari menu padahal 18/19 ada.
 # Pakai iptables -m owner --uid-owner di chain QUOTA-SSH (count uplink) +
 # CONNMARK di QUOTA-SSH-IN (count downlink). Block via usermod -L + kill
 # session (NO iptables block of IP).
@@ -852,6 +851,13 @@ __rere_track "patch-menu-misc" $?
 # Patch menu utama: tambah option 14 (Cek IP Limit) + 15 (Set IP Limit).
 __rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
 __rere_track "patch-menu-limit" $?
+
+# Patch menu utama: tambah option 16 (Cek Xray Quota) + 17 (Set Xray Quota).
+# CATATAN: harus dipanggil SEBELUM patch-menu-quota-ssh.sh — kalau diorder
+# kebalik, patch-menu-quota-ssh duluan akan inject "Cek SSH Quota" sebagai
+# anchor terdekat, dan ordering visual entry quota di menu jadi kacau.
+__rere_run_remote "${RERE_HOSTING}/patch-menu-quota.sh" /usr/local/sbin
+__rere_track "patch-menu-quota" $?
 
 # Patch menu utama: tambah option 18 (Cek SSH Quota) + 19 (Set SSH Quota).
 __rere_run_remote "${RERE_HOSTING}/patch-menu-quota-ssh.sh" /usr/local/sbin

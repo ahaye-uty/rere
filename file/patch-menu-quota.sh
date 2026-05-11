@@ -25,7 +25,9 @@ if [ ! -f "$MENU" ]; then
     exit 0
 fi
 
-if grep -q "cek-quota" "$MENU" && grep -q "set-quota" "$MENU"; then
+# Idempotent guard: pakai string spesifik supaya gak salah match
+# "cek-quota-ssh" / "set-quota-ssh" yang ditambahkan oleh patch-menu-quota-ssh.sh.
+if grep -q "Cek Xray Quota" "$MENU" && grep -q "Set Xray Quota" "$MENU"; then
     echo "[patch-menu-quota] $MENU: sudah ter-patch, skip."
     exit 0
 fi
