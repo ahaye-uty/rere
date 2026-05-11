@@ -493,6 +493,29 @@ chmod +x /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/troja
 [[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
 [[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
 
+# SSH bandwidth quota tracker + auto-block (per-user monthly quota).
+# Pakai iptables -m owner --uid-owner di chain QUOTA-SSH untuk count
+# bytes per user. Block via usermod -L + kill session (NO iptables block).
+wget -q -O /usr/local/bin/quota-ssh      "${hosting}/quota-ssh.sh"
+wget -q -O /usr/local/sbin/cek-quota-ssh "${hosting}/cek-quota-ssh.sh"
+wget -q -O /usr/local/sbin/set-quota-ssh "${hosting}/set-quota-ssh.sh"
+chmod +x /usr/local/bin/quota-ssh /usr/local/sbin/cek-quota-ssh /usr/local/sbin/set-quota-ssh
+mkdir -p /usr/local/etc/quota-ssh-blocked
+chmod 700 /usr/local/etc/quota-ssh-blocked
+[[ -f /usr/local/etc/quota-ssh.db ]] || touch /usr/local/etc/quota-ssh.db
+[[ -f /var/log/quota-ssh.log ]]      || touch /var/log/quota-ssh.log
+
+# Pre-populate SSH quota DB dengan user eligible (UID>=1000 + shell nologin/false).
+QUOTA_SSH_DEFAULT_MB="${QUOTA_SSH_DEFAULT_MB:-256000}"
+QUOTA_SSH_DB="/usr/local/etc/quota-ssh.db"
+QUOTA_SSH_RDATE="$(date +%Y-%m-01)"
+while IFS=: read -r quota_ssh_user _ ; do
+    [[ -z "$quota_ssh_user" ]] && continue
+    if ! awk -F'|' -v u="$quota_ssh_user" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_SSH_DB"; then
+        echo "$quota_ssh_user|${QUOTA_SSH_DEFAULT_MB}|0|active|$QUOTA_SSH_RDATE" >> "$QUOTA_SSH_DB"
+    fi
+done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd)
+
 # Cleanup leftover UDP-Custom limit artefacts from previous releases
 # (limit-udp-enabled / limit-udp-port + chain LIMIT-UDP-CUSTOM).
 rm -f /usr/local/etc/xray/limit-udp-enabled /usr/local/etc/xray/limit-udp-port 2>/dev/null
@@ -509,6 +532,8 @@ echo -e "
 */15 * * * * root xp
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 */1 * * * * root /usr/local/bin/limit-ip
+* * * * * root /usr/local/bin/quota-ssh
+2 0 1 * * root /usr/local/bin/quota-ssh --monthly-reset
 " >> /etc/crontab
 systemctl daemon-reload
 systemctl restart cron
@@ -756,6 +781,10 @@ __rere_track "patch-menu-misc" $?
 # Patch menu utama: tambah option 14 (Cek IP Limit) + 15 (Set IP Limit).
 __rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
 __rere_track "patch-menu-limit" $?
+
+# Patch menu utama: tambah option 18 (Cek SSH Quota) + 19 (Set SSH Quota).
+__rere_run_remote "${RERE_HOSTING}/patch-menu-quota-ssh.sh" /usr/local/sbin
+__rere_track "patch-menu-quota-ssh" $?
 
 # Patch add-ssh & add-ssh-gege: prompt "Limit IP (1/2)" saat buat akun.
 __rere_run_remote "${RERE_HOSTING}/patch-add-limit.sh" /usr/local/sbin
