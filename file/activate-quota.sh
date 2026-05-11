@@ -76,7 +76,7 @@ chmod 644 /usr/local/etc/xray/quota-xray.db /var/log/quota-xray.log
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 say "Pre-populate user xray dari $CFG dengan default quota ${DEFAULT_QUOTA_MB} MB (~250 GiB) ..."
 DB="/usr/local/etc/xray/quota-xray.db"
-RDATE="$(date +%Y-%m-01)"
+RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 ADDED=0
 while IFS= read -r email; do
   [ -z "$email" ] && continue

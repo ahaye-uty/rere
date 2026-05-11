@@ -44,6 +44,16 @@ mkdir -p "$BLOCKED_DIR"
 
 log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 
+# RESET_DATE = tanggal reset BERIKUTNYA (= tanggal 1 bulan depan).
+# Pakai `date -d 'next month'` (GNU date). Fallback ke awk kalo gak ada.
+next_reset_date() {
+  date -d 'next month' +%Y-%m-01 2>/dev/null && return
+  awk -v y="$(date +%Y)" -v m="$(date +%m)" 'BEGIN{
+    m=m+1; if (m>12){m=1; y=y+1}
+    printf "%04d-%02d-01\n", y, m
+  }'
+}
+
 LOCK="/var/lock/quota-xray.lock"
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -169,7 +179,7 @@ if [ "${1:-}" = "--reset" ] || [ "${1:-}" = "--monthly-reset" ]; then
       echo "$user|$limit_mb|$used|$status|$rdate" >> "$tmp"
       continue
     fi
-    new_rdate=$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)
+    new_rdate=$(next_reset_date)
     if [ "$status" = "blocked" ]; then
       unblock_user "$user"
       status=active
@@ -200,7 +210,7 @@ if [ "${1:-}" = "--block" ] && [ -n "${2:-}" ]; then
   reload_xray
   limit=$(db_get_field "$user" 2); [ -z "$limit" ] && limit=0
   used=$(db_get_field "$user" 3);  [ -z "$used"  ] && used=0
-  rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(date +%Y-%m-01)
+  rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(next_reset_date)
   db_upsert "$user" "$limit" "$used" "blocked" "$rdate"
   log "MANUAL BLOCK: user=$user"
   echo "User $user di-block."
@@ -219,7 +229,7 @@ if [ "${1:-}" = "--unblock" ] && [ -n "${2:-}" ]; then
   reload_xray
   limit=$(db_get_field "$user" 2); [ -z "$limit" ] && limit=0
   used=$(db_get_field "$user" 3);  [ -z "$used"  ] && used=0
-  rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(date +%Y-%m-01)
+  rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(next_reset_date)
   db_upsert "$user" "$limit" "$used" "active" "$rdate"
   log "MANUAL UNBLOCK: user=$user"
   echo "User $user di-unblock."
@@ -248,6 +258,8 @@ done < <(echo "$STATS_JSON" | jq -r '.stat[]? | "\(.name) \(.value // 0)"' 2>/de
 declare -A SEEN
 TMP=$(mktemp)
 new_block=0
+RDATE_NEXT="$(next_reset_date)"
+TODAY="$(date +%Y-%m-%d)"
 while IFS='|' read -r user limit_mb used status rdate; do
   [ -z "$user" ] && continue
   case "$user" in \#*) echo "$user|$limit_mb|$used|$status|$rdate" >> "$TMP"; continue ;; esac
@@ -256,7 +268,11 @@ while IFS='|' read -r user limit_mb used status rdate; do
   case "$used"  in ''|*[!0-9]*) used=0  ;; esac
   case "$delta" in ''|*[!0-9]*) delta=0 ;; esac
   new_used=$(( used + delta ))
-  [ -z "$rdate" ] && rdate=$(date +%Y-%m-01)
+  # Migrasi: kalau RESET_DATE udah lewat (lex compare YYYY-MM-DD), advance ke
+  # tanggal 1 bulan depan. Cover row lama yg pernah di-set ke awal bulan ini.
+  if [ -z "$rdate" ] || [[ "$rdate" < "$TODAY" ]]; then
+    rdate="$RDATE_NEXT"
+  fi
   if [ "$status" = "active" ] && [ -n "$limit_mb" ] && [ "$limit_mb" != "0" ]; then
     limit_bytes=$(( limit_mb * 1024 * 1024 ))
     if [ "$new_used" -ge "$limit_bytes" ]; then
@@ -273,7 +289,7 @@ done < "$DB"
 for user in "${!DELTA[@]}"; do
   [ -n "${SEEN[$user]:-}" ] && continue
   delta=${DELTA[$user]}
-  rdate=$(date +%Y-%m-01)
+  rdate="$RDATE_NEXT"
   limit_mb="$DEFAULT_QUOTA_MB"
   status=active
   if [ "$limit_mb" = "0" ]; then

@@ -134,7 +134,7 @@ menu_set_quota() {
   local status=active
   [ "$qg" = "0" ] && status=unlimited
   local used=$(db_get_field "$user" 3); [ -z "$used" ] && used=0
-  local rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(date +%Y-%m-01)
+  local rdate=$(db_get_field "$user" 5); [ -z "$rdate" ] && rdate=$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)
   local cur_status=$(db_get_field "$user" 4)
   # Kalau user lagi blocked dan kita ubah quota, jangan auto-unblock -- harus eksplisit via menu unblock
   [ "$cur_status" = "blocked" ] && status=blocked

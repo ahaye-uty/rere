@@ -507,7 +507,7 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 # Pre-populate quota DB dengan user xray yang sudah ada (default 250 GiB).
 QUOTA_DEFAULT_MB="${QUOTA_DEFAULT_MB:-256000}"
 QUOTA_DB="/usr/local/etc/xray/quota-xray.db"
-QUOTA_RDATE="$(date +%Y-%m-01)"
+QUOTA_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 while IFS= read -r email; do
     [[ -z "$email" ]] && continue
     if ! awk -F'|' -v u="$email" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_DB"; then
