@@ -493,6 +493,98 @@ chmod +x /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/troja
 [[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
 [[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
 
+# Xray bandwidth quota tracker + auto-block (per-user monthly quota).
+# Pakai xray stats API (sudah enabled di config.json). Default quota di-prompt
+# di bawah; existing user di-pre-populate sehingga enforcement langsung jalan.
+wget -q -O /usr/local/bin/quota-xray "${hosting}/quota-xray.sh"
+wget -q -O /usr/local/sbin/cek-quota "${hosting}/cek-quota.sh"
+wget -q -O /usr/local/sbin/set-quota "${hosting}/set-quota.sh"
+chmod +x /usr/local/bin/quota-xray /usr/local/sbin/cek-quota /usr/local/sbin/set-quota
+mkdir -p /usr/local/etc/xray/quota-blocked
+[[ -f /usr/local/etc/xray/quota-xray.db ]] || touch /usr/local/etc/xray/quota-xray.db
+[[ -f /var/log/quota-xray.log ]]           || touch /var/log/quota-xray.log
+
+# Prompt default quota Xray (bisa di-override per-user via menu 17).
+echo
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo -e "$green       Default Quota Xray (per akun)         $NC"
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo "  Nilai default quota bulanan tiap akun Xray baru, dalam GB."
+echo "  Saran:"
+echo "    -  50  : HP customer (pemakaian normal)"
+echo "    - 250  : STB OpenWRT (bandwidth besar, default)"
+echo "    -   0  : Unlimited (track only, no auto-block)"
+read -rp " Default quota Xray (GB) [250]: " QUOTA_GB_INPUT
+QUOTA_GB="${QUOTA_GB_INPUT:-250}"
+case "$QUOTA_GB" in ''|*[!0-9]*) QUOTA_GB=250 ;; esac
+QUOTA_DEFAULT_MB=$(( QUOTA_GB * 1024 ))
+echo "DEFAULT_QUOTA_MB=${QUOTA_DEFAULT_MB}" > /usr/local/etc/quota-xray.conf
+chmod 644 /usr/local/etc/quota-xray.conf
+echo "  -> Xray default quota = ${QUOTA_GB} GB (${QUOTA_DEFAULT_MB} MB)"
+echo "  -> tersimpan di /usr/local/etc/quota-xray.conf (admin bisa edit kemudian)"
+echo
+
+# Pre-populate Xray quota DB dengan user yang sudah ada di config.json.
+QUOTA_DB="/usr/local/etc/xray/quota-xray.db"
+QUOTA_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
+while IFS= read -r email; do
+    [[ -z "$email" ]] && continue
+    if ! awk -F'|' -v u="$email" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_DB"; then
+        echo "$email|${QUOTA_DEFAULT_MB}|0|active|$QUOTA_RDATE" >> "$QUOTA_DB"
+    fi
+done < <(grep -oE '"email"[[:space:]]*:[[:space:]]*"[^"]+"' /usr/local/etc/xray/config.json 2>/dev/null \
+           | sed -E 's/.*"([^"]+)"$/\1/' \
+           | sort -u)
+
+# Tambah submenu "Cek Xray Quota" (16) + "Set Xray Quota" (17) ke main menu.
+wget -q -O /tmp/patch-menu-quota.sh "${hosting}/patch-menu-quota.sh" \
+    && bash /tmp/patch-menu-quota.sh /usr/local/sbin \
+    || echo "[install] WARNING: gagal apply patch-menu-quota.sh (skip)"
+rm -f /tmp/patch-menu-quota.sh
+
+# SSH bandwidth quota tracker + auto-block (per-user monthly quota).
+# Pakai iptables -m owner --uid-owner di chain QUOTA-SSH (count uplink) +
+# CONNMARK di QUOTA-SSH-IN (count downlink). Block via usermod -L + kill
+# session (NO iptables block of IP).
+wget -q -O /usr/local/bin/quota-ssh      "${hosting}/quota-ssh.sh"
+wget -q -O /usr/local/sbin/cek-quota-ssh "${hosting}/cek-quota-ssh.sh"
+wget -q -O /usr/local/sbin/set-quota-ssh "${hosting}/set-quota-ssh.sh"
+chmod +x /usr/local/bin/quota-ssh /usr/local/sbin/cek-quota-ssh /usr/local/sbin/set-quota-ssh
+mkdir -p /usr/local/etc/quota-ssh-blocked
+chmod 700 /usr/local/etc/quota-ssh-blocked
+[[ -f /usr/local/etc/quota-ssh.db ]] || touch /usr/local/etc/quota-ssh.db
+[[ -f /var/log/quota-ssh.log ]]      || touch /var/log/quota-ssh.log
+
+# Prompt default quota SSH (bisa di-override per-user via menu 19).
+echo
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo -e "$green       Default Quota SSH (per akun)         $NC"
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo "  Nilai default quota bulanan tiap akun SSH baru, dalam GB."
+echo "  Saran:"
+echo "    -  50  : HP customer (pemakaian normal)"
+echo "    - 250  : STB OpenWRT (bandwidth besar, default)"
+echo "    -   0  : Unlimited (track only, no auto-block)"
+read -rp " Default quota SSH (GB) [250]: " QUOTA_SSH_GB_INPUT
+QUOTA_SSH_GB="${QUOTA_SSH_GB_INPUT:-250}"
+case "$QUOTA_SSH_GB" in ''|*[!0-9]*) QUOTA_SSH_GB=250 ;; esac
+QUOTA_SSH_DEFAULT_MB=$(( QUOTA_SSH_GB * 1024 ))
+echo "DEFAULT_QUOTA_MB=${QUOTA_SSH_DEFAULT_MB}" > /usr/local/etc/quota-ssh.conf
+chmod 644 /usr/local/etc/quota-ssh.conf
+echo "  -> SSH default quota = ${QUOTA_SSH_GB} GB (${QUOTA_SSH_DEFAULT_MB} MB)"
+echo "  -> tersimpan di /usr/local/etc/quota-ssh.conf (admin bisa edit kemudian)"
+echo
+
+# Pre-populate SSH quota DB dengan user eligible (UID>=1000 + shell nologin/false).
+QUOTA_SSH_DB="/usr/local/etc/quota-ssh.db"
+QUOTA_SSH_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
+while IFS=: read -r quota_ssh_user _ ; do
+    [[ -z "$quota_ssh_user" ]] && continue
+    if ! awk -F'|' -v u="$quota_ssh_user" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_SSH_DB"; then
+        echo "$quota_ssh_user|${QUOTA_SSH_DEFAULT_MB}|0|active|$QUOTA_SSH_RDATE" >> "$QUOTA_SSH_DB"
+    fi
+done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd)
+
 # Cleanup leftover UDP-Custom limit artefacts from previous releases
 # (limit-udp-enabled / limit-udp-port + chain LIMIT-UDP-CUSTOM).
 rm -f /usr/local/etc/xray/limit-udp-enabled /usr/local/etc/xray/limit-udp-port 2>/dev/null
@@ -509,6 +601,10 @@ echo -e "
 */15 * * * * root xp
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 */1 * * * * root /usr/local/bin/limit-ip
+* * * * * root /usr/local/bin/quota-xray
+1 0 1 * * root /usr/local/bin/quota-xray --monthly-reset
+* * * * * root /usr/local/bin/quota-ssh
+2 0 1 * * root /usr/local/bin/quota-ssh --monthly-reset
 " >> /etc/crontab
 systemctl daemon-reload
 systemctl restart cron
@@ -756,6 +852,10 @@ __rere_track "patch-menu-misc" $?
 # Patch menu utama: tambah option 14 (Cek IP Limit) + 15 (Set IP Limit).
 __rere_run_remote "${RERE_HOSTING}/patch-menu-limit.sh" /usr/local/sbin
 __rere_track "patch-menu-limit" $?
+
+# Patch menu utama: tambah option 18 (Cek SSH Quota) + 19 (Set SSH Quota).
+__rere_run_remote "${RERE_HOSTING}/patch-menu-quota-ssh.sh" /usr/local/sbin
+__rere_track "patch-menu-quota-ssh" $?
 
 # Patch add-ssh & add-ssh-gege: prompt "Limit IP (1/2)" saat buat akun.
 __rere_run_remote "${RERE_HOSTING}/patch-add-limit.sh" /usr/local/sbin
