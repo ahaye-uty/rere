@@ -61,6 +61,12 @@ wget -q -O /usr/local/sbin/set-quota  "${HOSTING}/set-quota.sh"    || { say "ERR
 
 chmod +x /usr/local/bin/quota-xray /usr/local/sbin/cek-quota /usr/local/sbin/set-quota
 
+say "Patch main menu (tambah entry 16. Cek Xray Quota + 17. Set Xray Quota) ..."
+wget -q -O /tmp/patch-menu-quota.sh "${HOSTING}/patch-menu-quota.sh" \
+    && bash /tmp/patch-menu-quota.sh /usr/local/sbin \
+    || say "WARNING: patch-menu-quota.sh gagal (skip)"
+rm -f /tmp/patch-menu-quota.sh
+
 say "Setup direktori state + DB + log ..."
 mkdir -p /usr/local/etc/xray/quota-blocked
 [ -f /usr/local/etc/xray/quota-xray.db ] || : > /usr/local/etc/xray/quota-xray.db

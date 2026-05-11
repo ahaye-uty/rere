@@ -504,6 +504,12 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 [[ -f /usr/local/etc/xray/quota-xray.db ]] || touch /usr/local/etc/xray/quota-xray.db
 [[ -f /var/log/quota-xray.log ]]           || touch /var/log/quota-xray.log
 
+# Tambah submenu "Cek Xray Quota" (16) + "Set Xray Quota" (17) ke main menu.
+wget -q -O /tmp/patch-menu-quota.sh "${RERE_HOSTING}/patch-menu-quota.sh" \
+    && bash /tmp/patch-menu-quota.sh /usr/local/sbin \
+    || echo "[install] WARNING: gagal apply patch-menu-quota.sh (skip)"
+rm -f /tmp/patch-menu-quota.sh
+
 # Cleanup leftover UDP-Custom limit artefacts from previous releases
 # (limit-udp-enabled / limit-udp-port + chain LIMIT-UDP-CUSTOM).
 rm -f /usr/local/etc/xray/limit-udp-enabled /usr/local/etc/xray/limit-udp-port 2>/dev/null
