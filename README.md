@@ -25,6 +25,8 @@
 
 > [**Port Information**](#Port-Information)
 
+> [**Uninstall**](#-uninstall)
+
 > [**Donate**](#Donate)
 
 ---
@@ -244,6 +246,45 @@ trojanman add | check | renew | del  <username> [days]
 > jenis layanan: xray HUP/WS-TLS dan SSH SSL.
 >
 > **SSH Direct di port 443/80** adalah raw SSH (tanpa TLS) yang dimultiplex oleh sslh. Untuk inject app yang pakai mode HTTP-only / payload custom tanpa TLS.
+
+---
+
+## 🧹 Uninstall
+
+Hapus tuntas autoscript Rere dari VPS — stop+disable semua service, apt purge package proxy-spesifik, hapus config dir + binary + systemd unit + cron entry + iptables rules, dan (opsional) hapus akun VPN. **Destructive, idempotent.**
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/ahaye-uty/rere/main/file/uninstall.sh)
+```
+
+Script bakal nanya konfirmasi (ketik `UNINSTALL` huruf besar) sebelum eksekusi. Flag opsional:
+
+| Flag              | Efek                                                                   |
+|-------------------|------------------------------------------------------------------------|
+| `--yes` / `-y`    | Skip prompt konfirmasi (untuk pemakaian otomatis).                     |
+| `--keep-packages` | Jangan `apt purge` (cuma hapus config + service + binary).             |
+| `--keep-users`    | Jangan hapus akun VPN (UID ≥ 1000 + shell `nologin` / `false`).        |
+
+Yang **DI-HAPUS**:
+- Service: `xray`, `nginx`, `sslh`, `sslh-internal`, `stunnel-ssh`, `dropbear`, `udp-custom`, `noobzvpns`, `badvpn`, `proxy`, `server` (REST API), `danted`, `fail2ban`.
+- Package (apt purge): `sslh`, `stunnel4`, `dante-server`, `libnginx-mod-stream`, `nginx`, `fail2ban`, `dropbear`.
+- Xray-core (lewat installer XTLS standar atau `rm`).
+- Cron entries: `limit-ip`, `quota-xray`, `quota-ssh`, `xp`, `backup`, `access.log` rotator.
+- iptables: chain `QUOTA-SSH`, `QUOTA-SSH-IN`, `LIMIT-UDP-CUSTOM`, `LIMIT-IP` (kalau ada) + NAT redirect 443/80 yang dipasang installer.
+- File: `/usr/local/etc/{xray,quota-*}`, `/etc/{udp,noobzvpns,sslh,stunnel,api,issue.net,xray,nginx,fail2ban,danted.conf}`, `/var/log/{xray,quota-*}`, `/root/{.acme.sh,.config/rclone,domain,.ip}`, `/etc/current_version`.
+- Binary CLI: `menu`, `add-*` / `del-*` / `cek-*` / `set-*`, `sshman` / `vmessman` / `vlessman` / `trojanman`, `quota-xray` / `quota-ssh`, `limit-ip`, `proxy`, `badvpn`, `/usr/bin/{server,noobzvpns}`.
+- Revert modifikasi: hapus `Port 109` + `Port 3303` + `Banner` di `sshd_config`, `nameserver 1.1.1.1` di `/etc/resolv.conf`, auto-run `menu` di `/root/.profile`.
+- (Default) Akun VPN: semua user UID ≥ 1000 dengan shell `/usr/sbin/nologin` / `/bin/false` / `/sbin/nologin`.
+
+Yang **TIDAK DI-HAPUS**:
+- Akun admin (shell login normal) + `root`.
+- SSH host keys.
+- Hostname, networking dasar OS.
+- Package umum (curl, wget, jq, iptables, dll).
+
+> **Catatan:** kalau VPS-nya cuma dipakai buat autoscript Rere doang, **reinstall OS dari panel provider** jauh lebih bersih + cepet (5-10 menit) drpd pake script ini. Pake `uninstall.sh` kalau emang ada data lain di VPS yang gak boleh ke-wipe.
+
+Setelah script selesai, disarankan `reboot` supaya port 443/80 ke-release total + service residual ke-clean.
 
 ---
 ## PATH CUSTOM
