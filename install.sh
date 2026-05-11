@@ -504,8 +504,21 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 [[ -f /usr/local/etc/xray/quota-xray.db ]] || touch /usr/local/etc/xray/quota-xray.db
 [[ -f /var/log/quota-xray.log ]]           || touch /var/log/quota-xray.log
 
+# Pre-populate quota DB dengan user xray yang sudah ada (default 250 GiB).
+QUOTA_DEFAULT_MB="${QUOTA_DEFAULT_MB:-256000}"
+QUOTA_DB="/usr/local/etc/xray/quota-xray.db"
+QUOTA_RDATE="$(date +%Y-%m-01)"
+while IFS= read -r email; do
+    [[ -z "$email" ]] && continue
+    if ! awk -F'|' -v u="$email" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_DB"; then
+        echo "$email|${QUOTA_DEFAULT_MB}|0|active|$QUOTA_RDATE" >> "$QUOTA_DB"
+    fi
+done < <(grep -oE '"email"[[:space:]]*:[[:space:]]*"[^"]+"' /usr/local/etc/xray/config.json 2>/dev/null \
+           | sed -E 's/.*"([^"]+)"$/\1/' \
+           | sort -u)
+
 # Tambah submenu "Cek Xray Quota" (16) + "Set Xray Quota" (17) ke main menu.
-wget -q -O /tmp/patch-menu-quota.sh "${RERE_HOSTING}/patch-menu-quota.sh" \
+wget -q -O /tmp/patch-menu-quota.sh "${hosting}/patch-menu-quota.sh" \
     && bash /tmp/patch-menu-quota.sh /usr/local/sbin \
     || echo "[install] WARNING: gagal apply patch-menu-quota.sh (skip)"
 rm -f /tmp/patch-menu-quota.sh

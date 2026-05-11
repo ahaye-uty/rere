@@ -14,6 +14,8 @@
 #   STATUS in: active | blocked | unlimited
 #   LIMIT_MB 0 = no quota check (kalau STATUS=unlimited)
 #
+# Default kuota baru: 250 GiB (256000 MB), override via env DEFAULT_QUOTA_MB.
+#
 # Mode:
 #   quota-xray                 -> akumulasi & enforce (default, dipanggil cron)
 #   quota-xray --reset         -> reset USED_BYTES + auto-unblock semua user
@@ -34,6 +36,7 @@ BLOCKED_DIR="/usr/local/etc/xray/quota-blocked"
 API_ADDR="127.0.0.1:10085"
 SENTINEL_UUID="00000000-0000-0000-0000-000000000000"
 SENTINEL_PASSWORD="quota-blocked-no-access"
+DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 
 mkdir -p "$BLOCKED_DIR"
 [ -f "$DB" ]  || : > "$DB"
@@ -271,8 +274,22 @@ for user in "${!DELTA[@]}"; do
   [ -n "${SEEN[$user]:-}" ] && continue
   delta=${DELTA[$user]}
   rdate=$(date +%Y-%m-01)
-  echo "$user|0|$delta|unlimited|$rdate" >> "$TMP"
-  log "AUTO-TRACK: user=$user (no quota set, status=unlimited)"
+  limit_mb="$DEFAULT_QUOTA_MB"
+  status=active
+  if [ "$limit_mb" = "0" ]; then
+    status=unlimited
+  else
+    limit_bytes=$(( limit_mb * 1024 * 1024 ))
+    if [ "$delta" -ge "$limit_bytes" ]; then
+      if block_user "$user"; then
+        status=blocked
+        new_block=1
+        log "AUTO-TRACK+QUOTA EXCEEDED: user=$user used=$delta bytes limit=${limit_mb}MB -> BLOCK"
+      fi
+    fi
+  fi
+  echo "$user|$limit_mb|$delta|$status|$rdate" >> "$TMP"
+  log "AUTO-TRACK: user=$user quota=${limit_mb}MB status=$status"
 done
 
 mv "$TMP" "$DB"

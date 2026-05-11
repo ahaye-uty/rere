@@ -73,6 +73,23 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 [ -f /var/log/quota-xray.log ]           || : > /var/log/quota-xray.log
 chmod 644 /usr/local/etc/xray/quota-xray.db /var/log/quota-xray.log
 
+DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
+say "Pre-populate user xray dari $CFG dengan default quota ${DEFAULT_QUOTA_MB} MB (~250 GiB) ..."
+DB="/usr/local/etc/xray/quota-xray.db"
+RDATE="$(date +%Y-%m-01)"
+ADDED=0
+while IFS= read -r email; do
+  [ -z "$email" ] && continue
+  if awk -F'|' -v u="$email" '$1==u {found=1; exit} END{exit !found}' "$DB"; then
+    continue
+  fi
+  echo "$email|${DEFAULT_QUOTA_MB}|0|active|$RDATE" >> "$DB"
+  ADDED=$(( ADDED + 1 ))
+done < <(grep -oE '"email"[[:space:]]*:[[:space:]]*"[^"]+"' "$CFG" \
+           | sed -E 's/.*"([^"]+)"$/\1/' \
+           | sort -u)
+say "Pre-populate: $ADDED user baru ditambahkan ke DB (existing rows tidak diubah)."
+
 say "Setup cron entries ..."
 # 1) tiap menit: akumulasi + enforce
 if ! grep -q "quota-xray$" /etc/crontab; then
