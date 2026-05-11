@@ -194,6 +194,14 @@ while IFS=: read -r user uid; do
   ensure_user_rule "$user" "$uid"
 done < <(eligible_users)
 
+RDATE_NOW="$(date +%Y-%m-01)"
+for user in "${!UID_OF[@]}"; do
+  if ! awk -F'|' -v u="$user" '$1==u {f=1; exit} END{exit !f}' "$DB"; then
+    echo "$user|${DEFAULT_QUOTA_MB}|0|active|$RDATE_NOW" >> "$DB"
+    log "AUTO-REGISTER: user=$user quota=${DEFAULT_QUOTA_MB}MB status=active"
+  fi
+done
+
 SAVE=$(iptables-save -c 2>/dev/null | grep -E "^\[[0-9]+:[0-9]+\] -A $CHAIN .*QUOTASSH:" || true)
 iptables -Z "$CHAIN" -w 5 2>/dev/null || true
 
@@ -201,9 +209,7 @@ declare -A DELTA
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   bytes=$(echo "$line" | sed -nE 's/^\[[0-9]+:([0-9]+)\] .*/\1/p')
-  user=$(echo "$line" | sed -nE 's/.*--comment QUOTASSH:([^ ]+).*/\1/p')
-  user=${user%\"}
-  user=${user#\"}
+  user=$(echo "$line" | sed -nE 's/.*--comment "?QUOTASSH:([^" ]+).*/\1/p')
   [ -z "$user" ] && continue
   case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
   DELTA["$user"]=$bytes
