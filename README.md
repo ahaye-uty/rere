@@ -19,6 +19,8 @@
 
 > [**IP Limit (SSH only)**](#-ip-limit-ssh-only)
 
+> [**Bandwidth Quota (Xray + SSH)**](#-bandwidth-quota-xray--ssh)
+
 > [**Account Manager CLI**](#-account-manager-cli)
 
 > [**Port Information**](#Port-Information)
@@ -42,7 +44,13 @@ apt update && apt install wget curl screen gnupg openssl perl binutils -y && wge
 > Cukup satu command di atas. Fresh install sudah otomatis termasuk:
 > - Inbound HTTPUpgrade (`/vless-hup`, `/vmess-hup`, `/trojan-hup`)
 > - IP-limit untuk SSH (cron `*/1 * * * *` jalan otomatis)
-> - Menu option **14. Cek IP Limit** + **15. Set IP Limit**
+> - **Bandwidth quota tracker untuk Xray + SSH** (cron `* * * * *`).
+>   Pas install ada 2 prompt:
+>   `Default quota Xray (GB) [250]:` lalu `Default quota SSH (GB) [250]:`.
+>   Saran: `50` untuk HP, `250` untuk STB OpenWRT, `0` untuk unlimited (track only).
+> - Menu option **14. Cek IP Limit** / **15. Set IP Limit**
+> - Menu option **16. Cek Xray Quota** / **17. Set Xray Quota**
+> - Menu option **18. Cek SSH Quota** / **19. Set SSH Quota**
 > - Prompt `Limit IP (1/2)` di `add-ssh` / `add-ssh-gege`
 > - CLI wrapper `sshman` / `vmessman` / `vlessman` / `trojanman`
 
@@ -74,6 +82,108 @@ set-limit                 # ubah limit (sama dengan menu 15)
 ```
 
 **UDP-Custom tidak di-limit.** `udp-custom` v1.4 itu single-process daemon yang tidak fork per client dan tidak expose per-user session info, jadi limit per-device tidak bisa di-enforce dengan reliable di network layer. Untuk akun yang butuh limit ketat, arahkan user pakai mode SSH/WS instead of UDP-Custom-only.
+
+---
+
+## 📊 Bandwidth Quota (Xray + SSH)
+
+Anti-abuse / anti-share berbasis **kuota bandwidth bulanan per-akun**, bukan per-IP. Cocok buat case STB OpenWRT yang nge-tunnel seluruh isi rumah lewat 1 akun — IP limit gak ke-detect (semua share 1 public IP), tapi kuota bandwidth pasti tembus duluan dari akun normal HP.
+
+Dua sistem terpisah, jalan paralel:
+
+|                       | **Xray quota**                        | **SSH quota**                                  |
+|-----------------------|---------------------------------------|------------------------------------------------|
+| Coverage              | vmess / vless / trojan                | OpenSSH + Dropbear + SSH-WS + SSH-SSL          |
+| Counter source        | `xray api statsquery -reset`          | iptables `QUOTA-SSH` (OUTPUT) + `QUOTA-SSH-IN` (INPUT, via CONNMARK) |
+| Blokir saat overlimit | rewrite UUID/password jadi sentinel di `config.json` → `systemctl restart xray` | `usermod -L <user>` + `pkill -KILL -u <user>` (TIDAK block IP di iptables) |
+| State DB              | `/usr/local/etc/xray/quota-xray.db`   | `/usr/local/etc/quota-ssh.db`                  |
+| Default per-akun      | `/usr/local/etc/quota-xray.conf`      | `/usr/local/etc/quota-ssh.conf`                |
+| Menu                  | **16. Cek Xray Quota** / **17. Set Xray Quota** | **18. Cek SSH Quota** / **19. Set SSH Quota** |
+| Cron                  | `* * * * * quota-xray` + `1 0 1 * * quota-xray --monthly-reset` | `* * * * * quota-ssh` + `2 0 1 * * quota-ssh --monthly-reset` |
+
+Setiap row di DB: `USER|LIMIT_MB|USED_BYTES|STATUS|RESET_DATE` (pipe-separated). `STATUS` ∈ `active | blocked | unlimited`. `LIMIT_MB=0` artinya unlimited (cuma di-track, no auto-block). `RESET_DATE` = tanggal reset bulanan berikutnya (= tanggal 1 bulan depan); reset bulanan otomatis nge-zero `USED_BYTES` + auto-unblock semua user yang blocked.
+
+### Default quota saat install
+
+Fresh install nanya dua-duanya:
+
+```
+─── Default Quota Xray (per akun) ───
+  -  50  : HP customer (pemakaian normal)
+  - 250  : STB OpenWRT (bandwidth besar, default)
+  -   0  : Unlimited (track only, no auto-block)
+ Default quota Xray (GB) [250]: _
+
+─── Default Quota SSH (per akun) ───
+  -  50  : HP customer (pemakaian normal)
+  - 250  : STB OpenWRT (bandwidth besar, default)
+  -   0  : Unlimited (track only, no auto-block)
+ Default quota SSH (GB) [250]: _
+```
+
+Jawaban disimpan di `/usr/local/etc/quota-{xray,ssh}.conf` (`DEFAULT_QUOTA_MB=<MB>`). Admin bisa edit conf-nya langsung kapan aja tanpa rerun install. **DB row user yang udah ada gak di-overwrite** saat re-deploy — kuota custom per-user yang sudah di-set lewat menu 17 / 19 tetep dipertahankan.
+
+> **GB binary vs GB desimal.** Prompt ambil angka GB lalu kali `1024`. Jadi `250 → 256000 MB` ≈ 268 GB desimal. Kalau mau pas 250 GB desimal yang biasa di-advertise ISP, isi `244` (≈ 244 GiB ≈ 250 GB desimal).
+
+### Bootstrap di VPS existing (tanpa fresh install)
+
+Kalau VPS udah jalan tapi belum punya fitur quota, jalanin satu-baris:
+
+```bash
+# Xray quota
+bash <(curl -sL https://raw.githubusercontent.com/ahaye-uty/rere/main/file/activate-quota.sh)
+
+# SSH quota
+bash <(curl -sL https://raw.githubusercontent.com/ahaye-uty/rere/main/file/activate-quota-ssh.sh)
+```
+
+Pertama kali jalan, masing-masing nanya default quota (sama persis kayak fresh install). Re-run berikutnya **skip prompt** kalau conf udah ada (pilihan admin di-preserve).
+
+### CLI wrapper
+
+```bash
+# Status (read-only)
+cek-quota            # tampilkan usage + quota + status semua user Xray
+cek-quota-ssh        # tampilkan usage + quota + status semua user SSH (+ PENDNG row buat akun yg belum kena cron tick)
+
+# Manage interaktif (set quota, reset, block, unblock — numbered picker)
+set-quota            # menu untuk Xray  (juga di main menu opsi 17)
+set-quota-ssh        # menu untuk SSH    (juga di main menu opsi 19)
+
+# Manage langsung tanpa menu
+quota-xray --reset            # reset usage SEMUA user xray + auto-unblock
+quota-xray --reset <user>     # reset 1 user
+quota-xray --block <user>     # block manual
+quota-xray --unblock <user>   # unblock manual
+quota-xray --monthly-reset    # alias --reset (dipanggil cron awal bulan)
+
+quota-ssh  --reset            # idem untuk SSH
+quota-ssh  --reset <user>
+quota-ssh  --block <user>
+quota-ssh  --unblock <user>
+quota-ssh  --monthly-reset
+```
+
+### Ganti default global tanpa edit script
+
+```bash
+echo "DEFAULT_QUOTA_MB=51200"  > /usr/local/etc/quota-xray.conf    # 50 GB untuk paket HP
+echo "DEFAULT_QUOTA_MB=256000" > /usr/local/etc/quota-ssh.conf     # 250 GB untuk paket STB
+```
+
+Conf di-source tiap cron tick + tiap kali `cek-quota` / `cek-quota-ssh` jalan, jadi gak perlu restart apa-apa. Akun *baru* (yang belum ada di DB) pake default baru; akun *lama* tetep pake kuota custom yang udah ke-set.
+
+### Detail teknis SSH quota (CONNMARK bidirectional)
+
+`-m owner --uid-owner` di iptables cuma match di chain `OUTPUT` — kalo cuma count itu, **bytes download bakal ke-undercount drastis** (request kecil, response besar masuk lewat INPUT tanpa socket-owner). Solusinya:
+
+1. Di chain `QUOTA-SSH` (OUTPUT): rule `-m owner --uid-owner <UID> -j CONNMARK --set-mark <UID>` nge-tag setiap connection yang dibuka user, lalu rule kedua `-m owner --uid-owner <UID> ... -j RETURN` nge-count outgoing bytes-nya.
+2. Di chain `QUOTA-SSH-IN` (INPUT): rule `-m connmark --mark <UID> ... -j RETURN` nge-count incoming bytes untuk setiap conntrack entry yang udah di-tag tadi.
+3. Cron tiap menit: `iptables-save -c` → parse `[pkts:bytes]` + comment per-user → SUM OUT + IN → `iptables -Z` reset counter → tambahin ke `USED_BYTES` di DB.
+
+User yang di-block: `/etc/shadow` line-nya di-backup ke `/usr/local/etc/quota-ssh-blocked/<user>`, terus `usermod -L` + `pkill -KILL -u`. Reversible 100% lewat `quota-ssh --unblock`. **Tidak ada IP block di iptables** — admin gak akan accidentally lock dirinya sendiri.
+
+> Filter user yang ke-track: UID ≥ 1000 **AND** shell ∈ `/usr/sbin/nologin | /bin/false | /sbin/nologin`. Admin user (shell login normal, root, dll) **otomatis ke-skip** — bukan kandidat reseller account.
 
 ---
 
