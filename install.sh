@@ -493,6 +493,17 @@ chmod +x /usr/local/sbin/vmessman /usr/local/sbin/vlessman /usr/local/sbin/troja
 [[ -f /usr/local/etc/xray/limit-ip ]]    || echo "2" > /usr/local/etc/xray/limit-ip
 [[ -f /usr/local/etc/xray/limit-ip.db ]] || touch /usr/local/etc/xray/limit-ip.db
 
+# Xray bandwidth quota tracker + auto-block (per-user monthly quota).
+# Pakai xray stats API (sudah enabled di config.json). Default-nya semua
+# user auto-tracked dengan status=unlimited; admin set quota via 'set-quota'.
+wget -q -O /usr/local/bin/quota-xray "${hosting}/quota-xray.sh"
+wget -q -O /usr/local/sbin/cek-quota "${hosting}/cek-quota.sh"
+wget -q -O /usr/local/sbin/set-quota "${hosting}/set-quota.sh"
+chmod +x /usr/local/bin/quota-xray /usr/local/sbin/cek-quota /usr/local/sbin/set-quota
+mkdir -p /usr/local/etc/xray/quota-blocked
+[[ -f /usr/local/etc/xray/quota-xray.db ]] || touch /usr/local/etc/xray/quota-xray.db
+[[ -f /var/log/quota-xray.log ]]           || touch /var/log/quota-xray.log
+
 # Cleanup leftover UDP-Custom limit artefacts from previous releases
 # (limit-udp-enabled / limit-udp-port + chain LIMIT-UDP-CUSTOM).
 rm -f /usr/local/etc/xray/limit-udp-enabled /usr/local/etc/xray/limit-udp-port 2>/dev/null
@@ -509,6 +520,8 @@ echo -e "
 */15 * * * * root xp
 0 0,1,3,5,6,9,11,12,13,15,17,18,21,23 * * * root backup
 */1 * * * * root /usr/local/bin/limit-ip
+* * * * * root /usr/local/bin/quota-xray
+1 0 1 * * root /usr/local/bin/quota-xray --monthly-reset
 " >> /etc/crontab
 systemctl daemon-reload
 systemctl restart cron
