@@ -20,9 +20,11 @@ NC='\033[0m'
 [ ! -f "$DB" ] && touch "$DB"
 
 collect_users() {
+  # Exclude 'nobody' (UID 65534) baik dari /etc/passwd maupun DB legacy —
+  # itu sistem user yg dipake Xray, bukan akun SSH yang bisa di-manage.
   {
-    awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1}' /etc/passwd
-    awk -F'|' '$1!="" && $1!~/^#/ {print $1}' "$DB" 2>/dev/null
+    awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 && $3<65000 && $1!="nobody" {print $1}' /etc/passwd
+    awk -F'|' '$1!="" && $1!~/^#/ && $1!="nobody" {print $1}' "$DB" 2>/dev/null
   } | sort -u
 }
 

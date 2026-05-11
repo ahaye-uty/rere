@@ -185,7 +185,7 @@ Conf di-source tiap cron tick + tiap kali `cek-quota` / `cek-quota-ssh` jalan, j
 
 User yang di-block: `/etc/shadow` line-nya di-backup ke `/usr/local/etc/quota-ssh-blocked/<user>`, terus `usermod -L` + `pkill -KILL -u`. Reversible 100% lewat `quota-ssh --unblock`. **Tidak ada IP block di iptables** — admin gak akan accidentally lock dirinya sendiri.
 
-> Filter user yang ke-track: UID ≥ 1000 **AND** shell ∈ `/usr/sbin/nologin | /bin/false | /sbin/nologin`. Admin user (shell login normal, root, dll) **otomatis ke-skip** — bukan kandidat reseller account.
+> Filter user yang ke-track: `1000 ≤ UID < 65000` **AND** shell ∈ `/usr/sbin/nologin | /bin/false | /sbin/nologin` **AND** username **bukan** `nobody`. Admin user (shell login normal, root, dll) **otomatis ke-skip** — bukan kandidat reseller account. System user `nobody` (UID 65534) juga ke-skip — dia dipake Xray + daemon helper (badvpn-udpgw, stunnel/ws-proxy bila `setuid = nobody`, dst), jadi `iptables -m owner --uid-owner` bakal nge-count semua traffic mereka ke akun `nobody` yang bukan customer SSH. Re-run `activate-quota-ssh.sh` aman: kalau ada baris legacy `nobody` di DB + iptables, akan otomatis di-cleanup.
 
 ---
 

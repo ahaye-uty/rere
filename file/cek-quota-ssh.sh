@@ -43,11 +43,14 @@ human_quota() {
 }
 
 # Build combined list: union of DB users + eligible /etc/passwd users.
+# Filter 'nobody' (UID 65534) — sistem user yg dipake Xray + daemon helper,
+# bukan akun SSH reseller. Bahkan kalau ada baris legacy di DB ke-skip dari
+# display (quota-ssh juga auto-prune-nya di tick berikutnya).
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
 if [ -s "$DB" ]; then
-  awk -F'|' '$1!="" && $1!~/^#/' "$DB" >> "$TMP"
+  awk -F'|' '$1!="" && $1!~/^#/ && $1!="nobody"' "$DB" >> "$TMP"
 fi
 
 while IFS=: read -r user uid; do
@@ -55,7 +58,7 @@ while IFS=: read -r user uid; do
   if ! awk -F'|' -v u="$user" '$1==u {f=1; exit} END{exit !f}' "$TMP" 2>/dev/null; then
     echo "$user|${DEFAULT_QUOTA_MB}|0|pending|$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)" >> "$TMP"
   fi
-done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd)
+done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 && $3<65000 && $1!="nobody" {print $1":"$3}' /etc/passwd)
 
 if [ ! -s "$TMP" ]; then
   echo "────────────────────────────────────────"

@@ -574,7 +574,10 @@ echo "  -> SSH default quota = ${QUOTA_SSH_GB} GB (${QUOTA_SSH_DEFAULT_MB} MB)"
 echo "  -> tersimpan di /usr/local/etc/quota-ssh.conf (admin bisa edit kemudian)"
 echo
 
-# Pre-populate SSH quota DB dengan user eligible (UID>=1000 + shell nologin/false).
+# Pre-populate SSH quota DB dengan user eligible (UID 1000..64999 + shell
+# nologin/false, kecuali 'nobody'). 'nobody' (UID 65534) di-skip karena
+# dipakai Xray + daemon helper — track traffic-nya bakal mis-attribute
+# bandwidth Xray ke "akun SSH" yang sebenarnya bukan customer SSH.
 QUOTA_SSH_DB="/usr/local/etc/quota-ssh.db"
 QUOTA_SSH_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 while IFS=: read -r quota_ssh_user _ ; do
@@ -582,7 +585,7 @@ while IFS=: read -r quota_ssh_user _ ; do
     if ! awk -F'|' -v u="$quota_ssh_user" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_SSH_DB"; then
         echo "$quota_ssh_user|${QUOTA_SSH_DEFAULT_MB}|0|active|$QUOTA_SSH_RDATE" >> "$QUOTA_SSH_DB"
     fi
-done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd)
+done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 && $3<65000 && $1!="nobody" {print $1":"$3}' /etc/passwd)
 
 # Cleanup leftover UDP-Custom limit artefacts from previous releases
 # (limit-udp-enabled / limit-udp-port + chain LIMIT-UDP-CUSTOM).

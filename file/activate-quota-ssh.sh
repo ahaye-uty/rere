@@ -82,8 +82,26 @@ elif [ -f "$CONF" ]; then
   say "Pakai default quota dari $CONF: DEFAULT_QUOTA_MB=${DEFAULT_QUOTA_MB}"
 fi
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
-say "Pre-populate user SSH (UID>=1000, shell nologin/false) dgn default quota ${DEFAULT_QUOTA_MB} MB ..."
 DB="/usr/local/etc/quota-ssh.db"
+
+# Cleanup row + iptables rule untuk system user 'nobody' kalau ke-include di
+# install lama (sebelum filter exclusion). 'nobody' itu UID 65534 yang dipake
+# Xray + daemon helper lain, jadi semua trafik mereka ke-attribute ke 'nobody'
+# — bukan ke user SSH yang sebenarnya. Idempotent: aman dipanggil berkali-kali.
+if [ -s "$DB" ] && grep -q '^nobody|' "$DB"; then
+  say "Hapus baris legacy 'nobody' dari $DB ..."
+  tmp="$(mktemp)"
+  awk -F'|' '$1!="nobody"' "$DB" > "$tmp" && mv "$tmp" "$DB"
+fi
+if command -v iptables >/dev/null 2>&1; then
+  # Drop semua rule di chain QUOTA-SSH / QUOTA-SSH-IN yang masih punya
+  # comment "QUOTASSH:nobody" atau uid-owner/connmark 65534.
+  while iptables -D QUOTA-SSH    -m owner   --uid-owner 65534 -j CONNMARK --set-mark 65534 -w 5 2>/dev/null; do :; done
+  while iptables -D QUOTA-SSH    -m owner   --uid-owner 65534 -m comment --comment "QUOTASSH:nobody" -j RETURN -w 5 2>/dev/null; do :; done
+  while iptables -D QUOTA-SSH-IN -m connmark --mark      65534 -m comment --comment "QUOTASSH:nobody" -j RETURN -w 5 2>/dev/null; do :; done
+fi
+
+say "Pre-populate user SSH (UID>=1000 & <65000, shell nologin/false, kecuali nobody) dgn default quota ${DEFAULT_QUOTA_MB} MB ..."
 RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 ADDED=0
 while IFS=: read -r user uid; do
@@ -93,7 +111,7 @@ while IFS=: read -r user uid; do
   fi
   echo "$user|${DEFAULT_QUOTA_MB}|0|active|$RDATE" >> "$DB"
   ADDED=$(( ADDED + 1 ))
-done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd)
+done < <(awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 && $3<65000 && $1!="nobody" {print $1":"$3}' /etc/passwd)
 say "Pre-populate: $ADDED user baru ditambahkan ke DB (existing rows tidak diubah)."
 
 say "Bootstrap iptables chain QUOTA-SSH + rule per user ..."
