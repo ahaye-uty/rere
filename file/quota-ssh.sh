@@ -76,7 +76,11 @@ if ! flock -n 9; then
 fi
 
 eligible_users() {
-  awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 {print $1":"$3}' /etc/passwd
+  # Filter user yg track-able sebagai akun SSH reseller:
+  #   shell ∈ nologin/false  &&  1000 ≤ UID < 65000  &&  bukan 'nobody'.
+  # Exclude UID 65534 ('nobody') karena dipakai Xray + daemon helper —
+  # traffic mereka jangan ke-attribute ke nobody, kotor + bikin auto-block.
+  awk -F: '($7=="/usr/sbin/nologin" || $7=="/bin/false" || $7=="/sbin/nologin") && $3>=1000 && $3<65000 && $1!="nobody" {print $1":"$3}' /etc/passwd
 }
 
 db_get_field() {
@@ -249,6 +253,10 @@ while IFS= read -r line; do
   bytes=$(echo "$line" | sed -nE 's/^\[[0-9]+:([0-9]+)\] .*/\1/p')
   user=$(echo "$line" | sed -nE 's/.*--comment "?QUOTASSH:([^" ]+).*/\1/p')
   [ -z "$user" ] && continue
+  # Defensive skip kalau leftover rule untuk 'nobody' (UID 65534) masih ada
+  # di iptables. Filter eligible_users sudah exclude nobody, tapi rule lama
+  # bisa nyangkut sampai chain di-flush ulang.
+  [ "$user" = "nobody" ] && continue
   case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
   prev=${DELTA["$user"]:-0}
   DELTA["$user"]=$(( prev + bytes ))
@@ -260,6 +268,8 @@ new_block=0
 while IFS='|' read -r user limit_mb used status rdate; do
   [ -z "$user" ] && continue
   case "$user" in \#*) echo "$user|$limit_mb|$used|$status|$rdate" >> "$TMP"; continue ;; esac
+  # Skip 'nobody' kalau ada baris legacy di DB; otomatis ke-prune pas writeback.
+  [ "$user" = "nobody" ] && { log "PRUNE legacy DB row: user=nobody"; continue; }
   SEEN["$user"]=1
   delta=${DELTA["$user"]:-0}
   case "$used"  in ''|*[!0-9]*) used=0  ;; esac
