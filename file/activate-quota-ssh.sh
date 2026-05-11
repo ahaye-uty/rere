@@ -56,7 +56,7 @@ chmod 644 /usr/local/etc/quota-ssh.db /var/log/quota-ssh.log
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 say "Pre-populate user SSH (UID>=1000, shell nologin/false) dgn default quota ${DEFAULT_QUOTA_MB} MB (~250 GiB) ..."
 DB="/usr/local/etc/quota-ssh.db"
-RDATE="$(date +%Y-%m-01)"
+RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 ADDED=0
 while IFS=: read -r user uid; do
   [ -z "$user" ] && continue

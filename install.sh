@@ -508,7 +508,7 @@ chmod 700 /usr/local/etc/quota-ssh-blocked
 # Pre-populate SSH quota DB dengan user eligible (UID>=1000 + shell nologin/false).
 QUOTA_SSH_DEFAULT_MB="${QUOTA_SSH_DEFAULT_MB:-256000}"
 QUOTA_SSH_DB="/usr/local/etc/quota-ssh.db"
-QUOTA_SSH_RDATE="$(date +%Y-%m-01)"
+QUOTA_SSH_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 while IFS=: read -r quota_ssh_user _ ; do
     [[ -z "$quota_ssh_user" ]] && continue
     if ! awk -F'|' -v u="$quota_ssh_user" '$1==u {f=1; exit} END{exit !f}' "$QUOTA_SSH_DB"; then
