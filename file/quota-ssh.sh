@@ -3,10 +3,22 @@
 # quota-ssh.sh
 #
 # Per-user SSH bandwidth quota tracker + auto-enforcer.
-# Pakai iptables -m owner --uid-owner di chain QUOTA-SSH untuk count
-# bytes per user. Akumulasi ke /usr/local/etc/quota-ssh.db, kalau user
-# lewat quota bulanannya: account di-lock (usermod -L) + semua session
-# SSH user di-kill. Reversible via --unblock atau reset bulanan otomatis.
+#
+# Bidirectional counting (out + in) via dua chain iptables:
+#   QUOTA-SSH    (attached ke OUTPUT)
+#                CONNMARK --set-mark UID per user (tag setiap koneksi
+#                yang dibuka oleh user-owned process). Plus rule RETURN
+#                per user dengan -m owner --uid-owner sebagai counter
+#                untuk bytes outgoing.
+#   QUOTA-SSH-IN (attached ke INPUT)
+#                RETURN per user dengan -m connmark --mark UID sebagai
+#                counter untuk bytes incoming dari koneksi yg sudah
+#                ke-tag CONNMARK.
+#
+# Total bytes per user per tick = sum(OUT counter) + sum(IN counter).
+# Akumulasi ke /usr/local/etc/quota-ssh.db. Kalau user lewat quota:
+# account di-lock (usermod -L) + semua session SSH user di-kill.
+# Reversible via --unblock atau reset bulanan otomatis.
 #
 # DB format (pipe-separated, satu baris per user):
 #   USER|LIMIT_MB|USED_BYTES|STATUS|RESET_DATE
@@ -31,7 +43,8 @@ export PATH
 DB="/usr/local/etc/quota-ssh.db"
 LOG="/var/log/quota-ssh.log"
 BLOCKED_DIR="/usr/local/etc/quota-ssh-blocked"
-CHAIN="QUOTA-SSH"
+CHAIN_OUT="QUOTA-SSH"
+CHAIN_IN="QUOTA-SSH-IN"
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 
 mkdir -p "$BLOCKED_DIR"
@@ -64,21 +77,28 @@ db_upsert() {
 }
 
 ensure_chain() {
-  iptables -L "$CHAIN" -n -w 5 >/dev/null 2>&1 || iptables -N "$CHAIN" -w 5 2>/dev/null
-  iptables -C OUTPUT -j "$CHAIN" -w 5 2>/dev/null || iptables -I OUTPUT 1 -j "$CHAIN" -w 5 2>/dev/null
+  iptables -L "$CHAIN_OUT" -n -w 5 >/dev/null 2>&1 || iptables -N "$CHAIN_OUT" -w 5 2>/dev/null
+  iptables -C OUTPUT -j "$CHAIN_OUT" -w 5 2>/dev/null || iptables -I OUTPUT 1 -j "$CHAIN_OUT" -w 5 2>/dev/null
+  iptables -L "$CHAIN_IN" -n -w 5 >/dev/null 2>&1 || iptables -N "$CHAIN_IN" -w 5 2>/dev/null
+  iptables -C INPUT -j "$CHAIN_IN" -w 5 2>/dev/null || iptables -I INPUT 1 -j "$CHAIN_IN" -w 5 2>/dev/null
 }
 
 ensure_user_rule() {
   local user="$1" uid="$2"
-  iptables -C "$CHAIN" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null \
-    || iptables -A "$CHAIN" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null
-}
-
-remove_user_rule() {
-  local user="$1" uid="$2"
-  while iptables -C "$CHAIN" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null; do
-    iptables -D "$CHAIN" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null || break
-  done
+  # CONNMARK --set-mark di OUTPUT (NON-TERMINATING) harus di posisi atas
+  # supaya fire sebelum rule RETURN per user. Idempotent via -C check.
+  if ! iptables -C "$CHAIN_OUT" -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" -w 5 2>/dev/null; then
+    iptables -I "$CHAIN_OUT" 1 -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" -w 5 2>/dev/null \
+      || log "WARNING: CONNMARK target not available, bidirectional counting disabled for $user"
+  fi
+  # OUT counter (append at bottom)
+  iptables -C "$CHAIN_OUT" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null \
+    || iptables -A "$CHAIN_OUT" -m owner --uid-owner "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null
+  # IN counter via connmark
+  if ! iptables -C "$CHAIN_IN" -m connmark --mark "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null; then
+    iptables -A "$CHAIN_IN" -m connmark --mark "$uid" -m comment --comment "QUOTASSH:$user" -j RETURN -w 5 2>/dev/null \
+      || log "WARNING: connmark match not available, INPUT counting disabled for $user"
+  fi
 }
 
 block_user() {
@@ -139,9 +159,9 @@ if [ "${1:-}" = "--reset" ] || [ "${1:-}" = "--monthly-reset" ]; then
     echo "$user|$limit_mb|0|$status|$new_rdate" >> "$tmp"
   done < "$DB"
   mv "$tmp" "$DB"
-  # Zero iptables counter for the chain (only for resetted users; simplest: zero all)
   if [ -z "$target" ]; then
-    iptables -Z "$CHAIN" -w 5 2>/dev/null || true
+    iptables -Z "$CHAIN_OUT" -w 5 2>/dev/null || true
+    iptables -Z "$CHAIN_IN"  -w 5 2>/dev/null || true
   fi
   exit 0
 fi
@@ -202,8 +222,9 @@ for user in "${!UID_OF[@]}"; do
   fi
 done
 
-SAVE=$(iptables-save -c 2>/dev/null | grep -E "^\[[0-9]+:[0-9]+\] -A $CHAIN .*QUOTASSH:" || true)
-iptables -Z "$CHAIN" -w 5 2>/dev/null || true
+SAVE=$(iptables-save -c 2>/dev/null | grep -E "^\[[0-9]+:[0-9]+\] -A ($CHAIN_OUT|$CHAIN_IN) .*QUOTASSH:" || true)
+iptables -Z "$CHAIN_OUT" -w 5 2>/dev/null || true
+iptables -Z "$CHAIN_IN"  -w 5 2>/dev/null || true
 
 declare -A DELTA
 while IFS= read -r line; do
@@ -212,7 +233,8 @@ while IFS= read -r line; do
   user=$(echo "$line" | sed -nE 's/.*--comment "?QUOTASSH:([^" ]+).*/\1/p')
   [ -z "$user" ] && continue
   case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-  DELTA["$user"]=$bytes
+  prev=${DELTA["$user"]:-0}
+  DELTA["$user"]=$(( prev + bytes ))
 done <<< "$SAVE"
 
 declare -A SEEN
