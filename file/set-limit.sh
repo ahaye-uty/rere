@@ -74,17 +74,39 @@ read -p "Pilih: " pilih
 
 case $pilih in
 1)
-    read -p "Input Username: " target_user
-    if [[ -z "$target_user" ]]; then
-        echo -e "${RED}Username kosong.${NC}"
+    if [[ -z "$ssh_users" ]]; then
+        echo -e "${RED}Belum ada akun SSH yg bisa di-set.${NC}"
         sleep 2
         exec "$0"
     fi
-    if ! echo "$ssh_users" | grep -qw "$target_user"; then
-        echo -e "${RED}User SSH '$target_user' tidak ditemukan.${NC}"
+    echo ""
+    echo -e " ${BOLD}═══ Pilih User SSH ═══${NC}"
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    user_arr=()
+    i=1
+    for u in $ssh_users; do
+        user_arr+=("$u")
+        lim=$(get_user_limit "$u")
+        idx=$(printf '%2d' "$i")
+        if [[ "$lim" == "1" ]]; then
+            echo -e " ${BOLD}$idx)${NC} $u — limit: ${YELLOW}$lim IP${NC}"
+        else
+            echo -e " ${BOLD}$idx)${NC} $u — limit: ${GREEN}$lim IP${NC}"
+        fi
+        i=$((i + 1))
+    done
+    echo -e " ${BOLD} 0)${NC} Batal"
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    read -p "Pilih user (no): " pick
+    if [[ "$pick" == "0" || -z "$pick" ]]; then
+        exec "$0"
+    fi
+    if ! [[ "$pick" =~ ^[0-9]+$ ]] || (( pick < 1 || pick > ${#user_arr[@]} )); then
+        echo -e "${RED}Pilihan tidak valid.${NC}"
         sleep 2
         exec "$0"
     fi
+    target_user="${user_arr[$((pick - 1))]}"
     current=$(get_user_limit "$target_user")
     echo -e "User: ${YELLOW}$target_user${NC} — limit saat ini: ${CYAN}$current IP${NC}"
     read -p "Set limit IP (1/2): " new_limit
