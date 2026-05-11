@@ -505,8 +505,27 @@ chmod 700 /usr/local/etc/quota-ssh-blocked
 [[ -f /usr/local/etc/quota-ssh.db ]] || touch /usr/local/etc/quota-ssh.db
 [[ -f /var/log/quota-ssh.log ]]      || touch /var/log/quota-ssh.log
 
+# Prompt default quota SSH (bisa di-override per-user via menu 19).
+echo
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo -e "$green       Default Quota SSH (per akun)         $NC"
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo "  Nilai default quota bulanan tiap akun SSH baru, dalam GB."
+echo "  Saran:"
+echo "    -  50  : HP customer (pemakaian normal)"
+echo "    - 250  : STB OpenWRT (bandwidth besar, default)"
+echo "    -   0  : Unlimited (track only, no auto-block)"
+read -rp " Default quota SSH (GB) [250]: " QUOTA_SSH_GB_INPUT
+QUOTA_SSH_GB="${QUOTA_SSH_GB_INPUT:-250}"
+case "$QUOTA_SSH_GB" in ''|*[!0-9]*) QUOTA_SSH_GB=250 ;; esac
+QUOTA_SSH_DEFAULT_MB=$(( QUOTA_SSH_GB * 1024 ))
+echo "DEFAULT_QUOTA_MB=${QUOTA_SSH_DEFAULT_MB}" > /usr/local/etc/quota-ssh.conf
+chmod 644 /usr/local/etc/quota-ssh.conf
+echo "  -> SSH default quota = ${QUOTA_SSH_GB} GB (${QUOTA_SSH_DEFAULT_MB} MB)"
+echo "  -> tersimpan di /usr/local/etc/quota-ssh.conf (admin bisa edit kemudian)"
+echo
+
 # Pre-populate SSH quota DB dengan user eligible (UID>=1000 + shell nologin/false).
-QUOTA_SSH_DEFAULT_MB="${QUOTA_SSH_DEFAULT_MB:-256000}"
 QUOTA_SSH_DB="/usr/local/etc/quota-ssh.db"
 QUOTA_SSH_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 while IFS=: read -r quota_ssh_user _ ; do

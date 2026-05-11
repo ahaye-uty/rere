@@ -11,6 +11,8 @@
 
 DB="/usr/local/etc/quota-ssh.db"
 LOG="/var/log/quota-ssh.log"
+CONF="/usr/local/etc/quota-ssh.conf"
+[ -f "$CONF" ] && . "$CONF"
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 
 human_size() {

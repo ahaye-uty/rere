@@ -45,6 +45,12 @@ LOG="/var/log/quota-ssh.log"
 BLOCKED_DIR="/usr/local/etc/quota-ssh-blocked"
 CHAIN_OUT="QUOTA-SSH"
 CHAIN_IN="QUOTA-SSH-IN"
+
+# Default quota baru: dari /usr/local/etc/quota-ssh.conf kalau ada (di-set
+# saat install / activate), fallback ke env DEFAULT_QUOTA_MB, fallback ke
+# 256000 MB (~250 GiB).
+CONF="/usr/local/etc/quota-ssh.conf"
+[ -f "$CONF" ] && . "$CONF"
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 
 mkdir -p "$BLOCKED_DIR"
