@@ -504,8 +504,27 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 [[ -f /usr/local/etc/xray/quota-xray.db ]] || touch /usr/local/etc/xray/quota-xray.db
 [[ -f /var/log/quota-xray.log ]]           || touch /var/log/quota-xray.log
 
-# Pre-populate quota DB dengan user xray yang sudah ada (default 250 GiB).
-QUOTA_DEFAULT_MB="${QUOTA_DEFAULT_MB:-256000}"
+# Prompt default quota Xray (bisa di-override per-user via menu 17).
+echo
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo -e "$green       Default Quota Xray (per akun)         $NC"
+echo -e "\e[33m────────────────────────────────────────\033[0m"
+echo "  Nilai default quota bulanan tiap akun baru, dalam GB."
+echo "  Saran:"
+echo "    -  50  : HP customer (pemakaian normal)"
+echo "    - 250  : STB OpenWRT (bandwidth besar, default)"
+echo "    -   0  : Unlimited (track only, no auto-block)"
+read -rp " Default quota Xray (GB) [250]: " QUOTA_GB_INPUT
+QUOTA_GB="${QUOTA_GB_INPUT:-250}"
+case "$QUOTA_GB" in ''|*[!0-9]*) QUOTA_GB=250 ;; esac
+QUOTA_DEFAULT_MB=$(( QUOTA_GB * 1024 ))
+echo "DEFAULT_QUOTA_MB=${QUOTA_DEFAULT_MB}" > /usr/local/etc/quota-xray.conf
+chmod 644 /usr/local/etc/quota-xray.conf
+echo "  -> Xray default quota = ${QUOTA_GB} GB (${QUOTA_DEFAULT_MB} MB)"
+echo "  -> tersimpan di /usr/local/etc/quota-xray.conf (admin bisa edit kemudian)"
+echo
+
+# Pre-populate quota DB dengan user xray yang sudah ada (pakai default di atas).
 QUOTA_DB="/usr/local/etc/xray/quota-xray.db"
 QUOTA_RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 while IFS= read -r email; do

@@ -36,6 +36,12 @@ BLOCKED_DIR="/usr/local/etc/xray/quota-blocked"
 API_ADDR="127.0.0.1:10085"
 SENTINEL_UUID="00000000-0000-0000-0000-000000000000"
 SENTINEL_PASSWORD="quota-blocked-no-access"
+
+# Default quota baru: dari /usr/local/etc/quota-xray.conf kalau ada (di-set
+# saat install / activate), fallback ke env DEFAULT_QUOTA_MB, fallback ke
+# 256000 MB (~250 GiB).
+CONF="/usr/local/etc/quota-xray.conf"
+[ -f "$CONF" ] && . "$CONF"
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 
 mkdir -p "$BLOCKED_DIR"

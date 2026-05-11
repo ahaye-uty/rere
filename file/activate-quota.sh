@@ -73,8 +73,36 @@ mkdir -p /usr/local/etc/xray/quota-blocked
 [ -f /var/log/quota-xray.log ]           || : > /var/log/quota-xray.log
 chmod 644 /usr/local/etc/xray/quota-xray.db /var/log/quota-xray.log
 
+CONF="/usr/local/etc/quota-xray.conf"
+# Prompt default quota Xray (skip kalau DEFAULT_QUOTA_MB udah di-set via env
+# atau kalau conf udah ada — assume admin udah pilih sebelumnya).
+if [ -z "${DEFAULT_QUOTA_MB:-}" ] && [ ! -f "$CONF" ]; then
+  echo
+  echo "─────────────────────────────────────────────"
+  echo "  Default Quota Xray (per akun)"
+  echo "─────────────────────────────────────────────"
+  echo "  Nilai default quota bulanan tiap akun baru, dalam GB."
+  echo "  Saran:"
+  echo "    -  50  : HP customer (pemakaian normal)"
+  echo "    - 250  : STB OpenWRT (bandwidth besar, default)"
+  echo "    -   0  : Unlimited (track only, no auto-block)"
+  if [ -r /dev/tty ]; then
+    read -rp " Default quota Xray (GB) [250]: " QUOTA_GB_INPUT </dev/tty
+  else
+    QUOTA_GB_INPUT=""
+  fi
+  QUOTA_GB="${QUOTA_GB_INPUT:-250}"
+  case "$QUOTA_GB" in ''|*[!0-9]*) QUOTA_GB=250 ;; esac
+  DEFAULT_QUOTA_MB=$(( QUOTA_GB * 1024 ))
+  echo "DEFAULT_QUOTA_MB=${DEFAULT_QUOTA_MB}" > "$CONF"
+  chmod 644 "$CONF"
+  say "Xray default quota = ${QUOTA_GB} GB (${DEFAULT_QUOTA_MB} MB) -> $CONF"
+elif [ -f "$CONF" ]; then
+  . "$CONF"
+  say "Pakai default quota dari $CONF: DEFAULT_QUOTA_MB=${DEFAULT_QUOTA_MB}"
+fi
 DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
-say "Pre-populate user xray dari $CFG dengan default quota ${DEFAULT_QUOTA_MB} MB (~250 GiB) ..."
+say "Pre-populate user xray dari $CFG dengan default quota ${DEFAULT_QUOTA_MB} MB ..."
 DB="/usr/local/etc/xray/quota-xray.db"
 RDATE="$(date -d 'next month' +%Y-%m-01 2>/dev/null || date +%Y-%m-01)"
 ADDED=0

@@ -7,6 +7,9 @@
 # ========================================================
 
 DB="/usr/local/etc/xray/quota-xray.db"
+CONF="/usr/local/etc/quota-xray.conf"
+[ -f "$CONF" ] && . "$CONF"
+DEFAULT_QUOTA_MB="${DEFAULT_QUOTA_MB:-256000}"
 LOG="/var/log/quota-xray.log"
 
 if [ ! -f "$DB" ] || [ ! -s "$DB" ]; then
